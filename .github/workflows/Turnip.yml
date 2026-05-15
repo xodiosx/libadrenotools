@@ -14,7 +14,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest          # ← x64 runner required for NDK
+    runs-on: ubuntu-latest          # x64 runner required for NDK
     strategy:
       matrix:
         arch: [aarch64, arm]
@@ -32,13 +32,16 @@ jobs:
           wget -q "https://dl.google.com/android/repository/${NDK_ZIP}"
           unzip -q ${NDK_ZIP} -d /opt
           echo "ANDROID_NDK_HOME=/opt/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
-          # Make tools executable
           chmod +x /opt/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/*
 
-      - name: Setup Termux sysroot
+      - name: Setup Termux sysroot (using same method as Wine script)
         run: |
-          mkdir -p /data/data/com.termux/files/usr
-          wget -qO- https://github.com/xodiosx/Wine-arm64ce/releases/download/wine-14/termux-rootfs.tar | sudo tar xf - -C /
+          mkdir termux && cd termux
+          wget -q https://github.com/xodiosx/Wine-arm64ce/releases/download/wine-14/termux-rootfs.tar
+          tar xf termux-rootfs.tar
+          sudo mv data /data
+          sudo chown -R $(whoami):$(whoami) /data
+          mkdir -p /data/data/com.termux/files/usr/tmp
           sudo chmod -R a+rX /data/data/com.termux/files/usr
 
       - name: Clone Mesa
