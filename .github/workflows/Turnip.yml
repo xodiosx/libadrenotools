@@ -14,7 +14,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest          # ← x64 runner required for NDK
     strategy:
       matrix:
         arch: [aarch64, arm]
@@ -22,20 +22,24 @@ jobs:
       - name: Install host build tools (minimal)
         run: |
           sudo apt update
-          sudo apt install -y \
-            meson ninja-build pkg-config python3-mako \
+          sudo apt install -y meson ninja-build pkg-config python3-mako python3-pip \
             glslang-tools flex bison curl ca-certificates
 
-      - name: Setup Android NDK
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r27c
+      - name: Download and setup Android NDK (manual)
+        run: |
+          NDK_VERSION="r27c"
+          NDK_ZIP="android-ndk-${NDK_VERSION}-linux.zip"
+          wget -q "https://dl.google.com/android/repository/${NDK_ZIP}"
+          unzip -q ${NDK_ZIP} -d /opt
+          echo "ANDROID_NDK_HOME=/opt/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
+          # Make tools executable
+          chmod +x /opt/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/*
 
       - name: Setup Termux sysroot
         run: |
           mkdir -p /data/data/com.termux/files/usr
-          wget -qO- https://github.com/xodiosx/Wine-arm64ce/releases/download/wine-14/termux-rootfs.tar | tar xf - -C /
-          chmod -R a+rX /data/data/com.termux/files/usr
+          wget -qO- https://github.com/xodiosx/Wine-arm64ce/releases/download/wine-14/termux-rootfs.tar | sudo tar xf - -C /
+          sudo chmod -R a+rX /data/data/com.termux/files/usr
 
       - name: Clone Mesa
         run: |
@@ -45,18 +49,13 @@ jobs:
       - name: Apply Termux Bionic patches
         run: |
           cd ~/mesa
-          # Function to download and apply a patch
           apply_termux_patch() {
             echo "Applying $1..."
             curl -sSfL "https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/$1" | patch -p1
           }
-
-          # Apply core compatibility patches
           apply_termux_patch "0000-disable-android-detection.patch"
           apply_termux_patch "0007-use-mtx_t-operations-in-turnip.patch"
           apply_termux_patch "0014-replace-turnip-wait_timestamp_safe-assert.patch"
-
-          # Apply feature & hardware support patches
           apply_termux_patch "0019-UBWC_5-and-UBWC_6-support.patch"
           apply_termux_patch "0016-unofficial_support_adreno_710_720.patch"
           apply_termux_patch "0020-unofficial-support-adreno-830.patch"
@@ -80,6 +79,7 @@ jobs:
             TARGET="armv7a-linux-androideabi"
           fi
           API=28
+          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           cat > ~/cross_file.txt << EOF
           [host_machine]
           system = 'linux'
@@ -88,10 +88,10 @@ jobs:
           endian = 'little'
 
           [binaries]
-          c = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${TARGET}${API}-clang'
-          cpp = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${TARGET}${API}-clang++'
-          ar = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
-          strip = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+          c = '$NDK_BIN/${TARGET}${API}-clang'
+          cpp = '$NDK_BIN/${TARGET}${API}-clang++'
+          ar = '$NDK_BIN/llvm-ar'
+          strip = '$NDK_BIN/llvm-strip'
           pkgconfig = 'pkg-config'
 
           [built-in options]
