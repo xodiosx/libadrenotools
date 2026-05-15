@@ -1,0 +1,143 @@
+name: Build Turnip for Termux (Bionic + Vulkan 1.4)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mesa_version:
+        description: 'Mesa version (e.g., mesa-26.0.6)'
+        required: true
+        default: 'main'
+      api_override:
+        description: 'Vulkan API override version (e.g., 1.4.301)'
+        required: false
+        default: '1.4.301'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      matrix:
+        arch: [aarch64, arm]
+    steps:
+      - name: Install host build tools (minimal)
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            meson ninja-build pkg-config python3-mako \
+            glslang-tools flex bison curl ca-certificates
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+
+      - name: Setup Termux sysroot
+        run: |
+          mkdir -p /data/data/com.termux/files/usr
+          wget -qO- https://github.com/xodiosx/Wine-arm64ce/releases/download/wine-14/termux-rootfs.tar | tar xf - -C /
+          chmod -R a+rX /data/data/com.termux/files/usr
+
+      - name: Clone Mesa
+        run: |
+          git clone --depth 1 --branch ${{ github.event.inputs.mesa_version }} \
+            https://gitlab.freedesktop.org/mesa/mesa.git ~/mesa
+
+      - name: Apply Termux Bionic patches
+        run: |
+          cd ~/mesa
+          # Function to download and apply a patch
+          apply_termux_patch() {
+            echo "Applying $1..."
+            curl -sSfL "https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/$1" | patch -p1
+          }
+
+          # Apply core compatibility patches
+          apply_termux_patch "0000-disable-android-detection.patch"
+          apply_termux_patch "0007-use-mtx_t-operations-in-turnip.patch"
+          apply_termux_patch "0014-replace-turnip-wait_timestamp_safe-assert.patch"
+
+          # Apply feature & hardware support patches
+          apply_termux_patch "0019-UBWC_5-and-UBWC_6-support.patch"
+          apply_termux_patch "0016-unofficial_support_adreno_710_720.patch"
+          apply_termux_patch "0020-unofficial-support-adreno-830.patch"
+          apply_termux_patch "0021-unofficial-support-adreno-810-825-829.patch"
+
+      - name: Override Vulkan API version
+        if: github.event.inputs.api_override != ''
+        run: |
+          VER="${{ github.event.inputs.api_override }}"
+          echo "Forcing Vulkan API version to $VER"
+          sed -i "s/\(apiVersion\s*=\s*\).*/\1VK_API_VERSION_${VER//\./_};/" \
+            ~/mesa/src/freedreno/vulkan/tu_device.c
+
+      - name: Create Meson cross file for ${{ matrix.arch }}
+        run: |
+          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+            CPU="aarch64"
+            TARGET="aarch64-linux-android"
+          else
+            CPU="armv7l"
+            TARGET="armv7a-linux-androideabi"
+          fi
+          API=28
+          cat > ~/cross_file.txt << EOF
+          [host_machine]
+          system = 'linux'
+          cpu_family = '$CPU'
+          cpu = '$CPU'
+          endian = 'little'
+
+          [binaries]
+          c = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${TARGET}${API}-clang'
+          cpp = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${TARGET}${API}-clang++'
+          ar = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
+          strip = '$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+          pkgconfig = 'pkg-config'
+
+          [built-in options]
+          c_args = ['-I/data/data/com.termux/files/usr/include']
+          c_link_args = ['-L/data/data/com.termux/files/usr/lib', '-Wl,-rpath=/data/data/com.termux/files/usr/lib']
+          EOF
+
+      - name: Configure Mesa build for Turnip
+        run: |
+          meson setup build \
+            --cross-file ~/cross_file.txt \
+            -Dvulkan-drivers=freedreno \
+            -Dgallium-drivers= \
+            -Dplatforms=x11 \
+            -Dandroid-libbacktrace=disabled \
+            -Dllvm=disabled \
+            -Dbuildtype=release \
+            -Dprefix=/usr \
+            -Dstrip=true \
+            -Dglx=disabled \
+            -Dgbm=disabled \
+            -Dopengl=false \
+            -Degl=disabled \
+            -Dgles1=disabled \
+            -Dgles2=disabled \
+            -Dshared-glapi=disabled \
+            -Ddri3=disabled \
+            -Dshader-cache=enabled
+
+      - name: Build Turnip
+        run: ninja -C build
+
+      - name: Package artifact for ${{ matrix.arch }}
+        run: |
+          mkdir -p turnip_out
+          cp build/src/freedreno/vulkan/libvulkan_freedreno.so turnip_out/
+          if [ "${{ matrix.arch }}" = "arm" ]; then
+            TARNAME=turnip-${{ github.event.inputs.mesa_version }}-arm.tar.xz
+          else
+            TARNAME=turnip-${{ github.event.inputs.mesa_version }}-aarch64.tar.xz
+          fi
+          tar -cJf $TARNAME -C turnip_out .
+          echo "artifact_name=$TARNAME" >> $GITHUB_ENV
+
+      - name: Upload ${{ matrix.arch }} artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: turnip-${{ github.event.inputs.mesa_version }}-${{ matrix.arch }}
+          path: turnip-${{ github.event.inputs.mesa_version }}-*.tar.xz
