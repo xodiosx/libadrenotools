@@ -63,8 +63,8 @@ jobs:
           apply_termux_patch "0014-replace-turnip-wait_timestamp_safe-assert.patch"
           #apply_termux_patch "0019-UBWC_5-and-UBWC_6-support.patch"
           apply_termux_patch "0016-unofficial_support_adreno_710_720.patch"
-          apply_termux_patch "0020-unofficial-support-adreno-830.patch"
-          apply_termux_patch "0021-unofficial-support-adreno-810-825-829.patch"
+          #apply_termux_patch "0020-unofficial-support-adreno-830.patch"
+          #apply_termux_patch "0021-unofficial-support-adreno-810-825-829.patch"
 
       - name: Apply Turnip pthread→mtx fix (replaces 0007)
         run: |
