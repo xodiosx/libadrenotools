@@ -24,14 +24,16 @@ jobs:
 
     - name: Install Dependencies
       run: |
-        # Install ARM64 cross-compiler
         sudo apt-get update
         sudo apt-get install -y binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu
 
-        # Download and compile bin2c from source (single file, no git needed)
-        curl -fsSL -o bin2c.c https://raw.githubusercontent.com/zhaojh329/bin2c/master/bin2c.c
+        # Download bin2c source tarball (no git needed)
+        curl -L -o bin2c.tar.gz https://github.com/zhaojh329/bin2c/archive/refs/heads/master.tar.gz
+        tar xzf bin2c.tar.gz
+        cd bin2c-master
         cc bin2c.c -o bin2c
         sudo mv bin2c /usr/local/bin/
+        cd ..
 
     - name: Generate ASM Header
       run: |
