@@ -57,10 +57,10 @@ jobs:
             echo "Applying $patchfile..."
             curl -sSfL "https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/$patchfile" > "/tmp/$patchfile"
 
-            # For patch 0007, remove the Wayland-specific hunk (we build with -Dplatforms=x11)
+            # For patch 0007, remove the Wayland hunk completely (we build with -Dplatforms=x11)
             if [ "$patchfile" = "0007-use-mtx_t-operations-in-turnip.patch" ]; then
-              echo "Removing Wayland hunk from $patchfile"
-              sed -i '/^diff --git.*wsi_common_wayland\.c/,/^diff --git/{//!d}; /^diff --git.*wsi_common_wayland\.c/d' "/tmp/$patchfile"
+              echo "Truncating Wayland hunk from $patchfile"
+              sed -i '/^diff --git.*wsi_common_wayland\.c/,$d' "/tmp/$patchfile"
             fi
 
             patch -p1 < "/tmp/$patchfile"
