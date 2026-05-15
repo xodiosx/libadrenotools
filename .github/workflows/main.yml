@@ -27,8 +27,8 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu
 
-        # Download bin2c source tarball (no git needed)
-        curl -L -o bin2c.tar.gz https://github.com/zhaojh329/bin2c/archive/refs/heads/master.tar.gz
+        # Download bin2c source tarball from the new repository
+        curl -L -o bin2c.tar.gz https://github.com/gwilymk/bin2c/archive/refs/heads/master.tar.gz
         tar xzf bin2c.tar.gz
         cd bin2c-master
         cc bin2c.c -o bin2c
