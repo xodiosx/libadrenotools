@@ -49,24 +49,24 @@ jobs:
           git clone --depth 1 --branch ${{ github.event.inputs.mesa_version }} \
             https://gitlab.freedesktop.org/mesa/mesa.git ~/mesa
 
-      - name: Apply Termux Bionic patches (except 0007, handled below)
+      - name: Apply Termux Bionic patches
         run: |
           cd ~/mesa
           apply_termux_patch() {
             local patchfile="$1"
             echo "Applying $patchfile..."
-            curl -sSfL "https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/$patchfile" | patch -p1
+            curl -sSfL "https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/$patchfile" | patch -N -p1
           }
 
           apply_termux_patch "0000-disable-android-detection.patch"
-          # 0007 is replaced with a direct sed fix (see next step)
+          # 0007 replaced with direct sed fix (see next step)
           apply_termux_patch "0014-replace-turnip-wait_timestamp_safe-assert.patch"
           #apply_termux_patch "0019-UBWC_5-and-UBWC_6-support.patch"
           apply_termux_patch "0016-unofficial_support_adreno_710_720.patch"
           apply_termux_patch "0020-unofficial-support-adreno-830.patch"
           apply_termux_patch "0021-unofficial-support-adreno-810-825-829.patch"
 
-      - name: Apply Turnip pthread→mtx fix (custom, replaces 0007)
+      - name: Apply Turnip pthread→mtx fix (replaces 0007)
         run: |
           cd ~/mesa
           sed -i 's/pthread_mutex_lock(&dev->pipeline_mutex)/mtx_lock(\&dev->pipeline_mutex)/g' src/freedreno/vulkan/tu_shader.cc
