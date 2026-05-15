@@ -28,12 +28,10 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu
 
-        # Build bin2c from source (single C file)
-        git clone --depth 1 https://github.com/zhaojh329/bin2c.git
-        cd bin2c
+        # Download and compile bin2c from source (single file, no git needed)
+        curl -fsSL -o bin2c.c https://raw.githubusercontent.com/zhaojh329/bin2c/master/bin2c.c
         cc bin2c.c -o bin2c
         sudo mv bin2c /usr/local/bin/
-        cd ..
 
     - name: Generate ASM Header
       run: |
