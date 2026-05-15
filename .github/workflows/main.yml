@@ -27,7 +27,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu
 
-        # Download bin2c source tarball from the new repository
+        # Download bin2c source from the working repo and compile
         curl -L -o bin2c.tar.gz https://github.com/gwilymk/bin2c/archive/refs/heads/master.tar.gz
         tar xzf bin2c.tar.gz
         cd bin2c-master
@@ -51,8 +51,13 @@ jobs:
     - name: Build
       run: cmake --build build --config Release
 
-    - name: Upload Artifact
+    - name: List built libraries (debug)
+      run: find build -type f \( -name "*.so" -o -name "*.a" \)
+
+    - name: Upload Artifact (any .so file)
       uses: actions/upload-artifact@v4
       with:
         name: libadrenotools
-        path: build/libadrenotools.so
+        path: |
+          build/**/*.so
+          build/**/*.a
