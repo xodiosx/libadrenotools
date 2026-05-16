@@ -45,9 +45,6 @@ jobs:
           sudo chown -R $(whoami):$(whoami) /data
           mkdir -p /data/data/com.termux/files/usr/tmp
           sudo chmod -R a+rX /data/data/com.termux/files/usr
-          ls -la /data/data/com.termux/files/usr/lib/pkgconfig/ || echo "Directory missing!"
-          echo "---"
-          cat /data/data/com.termux/files/usr/lib/pkgconfig/libdrm.pc 2>/dev/null || echo "libdrm.pc NOT FOUND"
 
       - name: Clone Mesa
         run: |
@@ -119,8 +116,7 @@ jobs:
           echo "cpp = '${NDK_BIN}/${TARGET}${API}-clang++'" >> ~/cross_file.txt
           echo "ar = '${NDK_BIN}/llvm-ar'" >> ~/cross_file.txt
           echo "strip = '${NDK_BIN}/llvm-strip'" >> ~/cross_file.txt
-          echo "pkg_config_path = '/data/data/com.termux/files/usr/lib/pkgconfig'" >> ~/cross_file.txt    
-          echo "pkg-config = '${pkg_config_path}'" >> ~/cross_file.txt
+          echo "pkgconfig = 'pkg-config'" >> ~/cross_file.txt
           echo "" >> ~/cross_file.txt
           echo "[properties]" >> ~/cross_file.txt
           echo "pkg_config_path = '/data/data/com.termux/files/usr/lib/pkgconfig'" >> ~/cross_file.txt
@@ -130,6 +126,7 @@ jobs:
 
       - name: Configure Mesa build for Turnip
         run: |
+          export PKG_CONFIG_PATH=/data/data/com.termux/files/usr/lib/pkgconfig
           meson setup build ~/mesa \
             --cross-file ~/cross_file.txt \
             -Dvulkan-drivers=freedreno \
