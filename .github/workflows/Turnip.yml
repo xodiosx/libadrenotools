@@ -158,7 +158,7 @@ jobs:
             -Dgles2=enabled \
             -Dglx=dri \
             -Dllvm=disabled \
-            -Dplatforms=x11,wayland \
+            -Dplatforms=x11 \
             -Dgallium-drivers= \
             -Dxmlconfig=disabled \
             -Dfreedreno-kmds=msm,kgsl \
