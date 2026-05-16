@@ -155,7 +155,7 @@ jobs:
           echo "cpp = '${NDK_BIN}/${TARGET}${API}-clang++'" >> ~/cross_file.txt
           echo "ar = '${NDK_BIN}/llvm-ar'" >> ~/cross_file.txt
           echo "strip = '${NDK_BIN}/llvm-strip'" >> ~/cross_file.txt
-          echo "pkgconfig = 'termux-pkg-config'" >> ~/cross_file.txt
+          echo "pkg-config = 'termux-pkg-config'" >> ~/cross_file.txt
           echo "" >> ~/cross_file.txt
           echo "[properties]" >> ~/cross_file.txt
           echo "" >> ~/cross_file.txt
@@ -181,8 +181,7 @@ jobs:
             -Dgles2=disabled \
             -Dfreedreno-kmds=msm,kgsl \
             -Dxmlconfig=disabled \
-            -Dvalgrind=disabled \
-            -Dudev=false
+            -Dvalgrind=disabled
 
       - name: Build Turnip
         run: ninja -C build
