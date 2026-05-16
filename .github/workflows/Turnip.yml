@@ -52,6 +52,15 @@ jobs:
           mkdir -p /data/data/com.termux/files/usr/tmp
           sudo chmod -R a+rX /data/data/com.termux/files/usr
 
+      - name: Create Bionic library symlinks for Meson
+        run: |
+          cd /data/data/com.termux/files/usr/lib
+           # Bionic combines these into libc.so
+           for lib in dl pthread rt; do
+            sudo ln -sf libc.so lib${lib}.so
+            done
+           ls -la libdl.so libpthread.so librt.so  # verify
+      
       - name: Clone Mesa
         run: |
           git clone --depth 1 --branch ${{ github.event.inputs.mesa_version }} \
