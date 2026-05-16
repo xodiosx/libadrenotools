@@ -57,24 +57,28 @@ jobs:
             sudo touch /data/data/com.termux/files/usr/include/android_lf.h
           fi
 
-      - name: Install SPIRV-Tools into Termux sysroot
+      - name: Install missing packages inside Termux (via proot)
         run: |
-          ARCH_DEB="aarch64"
-          if [ "${{ matrix.arch }}" = "arm" ]; then ARCH_DEB="arm"; fi
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static proot
 
-          mkdir -p /tmp/spirv-debs && cd /tmp/spirv-debs
+          sudo mkdir -p /data/data/com.termux/files/usr/etc
+          echo "nameserver 8.8.8.8" | sudo tee /data/data/com.termux/files/usr/etc/resolv.conf > /dev/null
 
-          #wget -q "https://packages.termux.dev/apt/termux-main/pool/main/s/spirv-tools/spirv-tools_2025.1_${ARCH_DEB}.deb"
-          wget -q "https://packages.termux.dev/apt/termux-main/pool/main/s/spirv-tools/spirv-tools_1.4.350.0_aarch64.deb"
+          proot \
+            --rootfs=/data \
+            --bind=/proc \
+            --bind=/sys \
+            --bind=/dev \
+            --cwd=/data/data/com.termux/files/home \
+            /data/data/com.termux/files/usr/bin/bash -c "
+              export PREFIX=/data/data/com.termux/files/usr
+              export PATH=\$PREFIX/bin:\$PATH
+              apt-get update
+              apt-get install -y spirv-tools-dev libudev-dev TERMUX_PKG_DEPENDS="libandroid-shmem libwayland libx11 libxext libxfixes libxshmfence libxxf86vm ncurses vulkan-loader zlib
+            "
 
-          for deb in *.deb; do
-            dpkg-deb -x "$deb" /tmp/spirv-debs/extracted/
-          done
-
-          sudo cp -r /tmp/spirv-debs/extracted/data/data/com.termux/files/usr/* \
-                     /data/data/com.termux/files/usr/
-          sudo chmod -R 755 /data/data/com.termux/files/usr/lib
-          sudo chmod -R 755 /data/data/com.termux/files/usr/include
+          sudo chmod -R a+rX /data/data/com.termux/files/usr
 
       - name: Setup pkg-config wrapper (idirafter – no header conflicts)
         run: |
