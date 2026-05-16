@@ -46,12 +46,6 @@ jobs:
           mkdir -p /data/data/com.termux/files/usr/tmp
           sudo chmod -R a+rX /data/data/com.termux/files/usr
 
-      # 👇 NEW: copy android_lf.h from NDK into the Termux sysroot
-      - name: Copy android_lf.h to Termux sysroot
-        run: |
-          sudo cp /opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/android_lf.h \
-                  /data/data/com.termux/files/usr/include/
-
       - name: Clone Mesa
         run: |
           git clone --depth 1 --branch ${{ github.event.inputs.mesa_version }} \
@@ -150,7 +144,8 @@ jobs:
             -Dshared-glapi=disabled \
             -Dshader-cache=enabled \
             -Dfreedreno-kmds=msm,kgsl \
-            -Dxmlconfig=disabled
+            -Dxmlconfig=disabled \
+            -Dlibarchive=disabled
 
       - name: Build Turnip
         run: ninja -C build
