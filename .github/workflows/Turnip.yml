@@ -4,41 +4,39 @@ on:
   workflow_dispatch:
     inputs:
       mesa_version:
-        description: Mesa version (e.g., mesa-26.0.6)
+        description: 'Mesa version (e.g., mesa-26.0.6)'
         required: true
-        default: main
+        default: 'main'
       api_override:
-        description: Vulkan API override (e.g., 1.4.301)
+        description: 'Vulkan API override version (e.g., 1.4.301)'
         required: false
-        default: 1.4.301
+        default: '1.4.301'
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
         arch: [aarch64, arm]
-
     steps:
-      - name: Install dependencies
+      - name: Install host build tools (minimal)
         run: |
           sudo apt update
-          sudo apt install -y \
-            meson ninja-build pkg-config python3 python3-mako \
-            glslang-tools flex bison curl git unzip
+          sudo apt install -y meson ninja-build pkg-config python3-mako python3-pip \
+            glslang-tools flex bison curl ca-certificates
 
-      - name: Setup Android NDK
+      - name: Download and setup Android NDK (manual)
         run: |
-          NDK_VERSION=r27c
-          wget -q https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip
-          unzip -q android-ndk-${NDK_VERSION}-linux.zip -d /opt
+          NDK_VERSION="r27c"
+          NDK_ZIP="android-ndk-${NDK_VERSION}-linux.zip"
+          wget -q "https://dl.google.com/android/repository/${NDK_ZIP}"
+          unzip -q ${NDK_ZIP} -d /opt
           echo "ANDROID_NDK_HOME=/opt/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
+          chmod +x /opt/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/*
 
-      - name: Setup Termux sysroot
+      - name: Setup Termux sysroot (same as Wine build)
         run: |
-          mkdir termux
-          cd termux
+          mkdir termux && cd termux
           wget -q https://github.com/xodiosx/Wine-arm64ce/releases/download/wine-14/termux-rootfs.tar
           tar xf termux-rootfs.tar
           sudo mv data /data
@@ -48,64 +46,57 @@ jobs:
 
       - name: Clone Mesa
         run: |
-          git clone --depth 1 \
-            --branch "${{ github.event.inputs.mesa_version }}" \
+          git clone --depth 1 --branch ${{ github.event.inputs.mesa_version }} \
             https://gitlab.freedesktop.org/mesa/mesa.git ~/mesa
 
-      - name: Apply Termux patches
+      - name: Apply Termux Bionic patches
         run: |
           cd ~/mesa
-
-          apply_patch() {
-            curl -sSfL \
-              https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/$1 \
-              | patch -N -p1
+          apply_termux_patch() {
+            local patchfile="$1"
+            echo "Applying $patchfile..."
+            curl -sSfL "https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/$patchfile" | patch -N -p1
           }
 
-          apply_patch 0000-disable-android-detection.patch
-          apply_patch 0014-replace-turnip-wait_timestamp_safe-assert.patch
-          apply_patch 0016-unofficial_support_adreno_710_720.patch
+          apply_termux_patch "0000-disable-android-detection.patch"
+          # 0007 replaced with direct sed fix (next step)
+          apply_termux_patch "0014-replace-turnip-wait_timestamp_safe-assert.patch"
+          apply_termux_patch "0019-UBWC_5-and-UBWC_6-support.patch"
+          apply_termux_patch "0016-unofficial_support_adreno_710_720.patch"
+          apply_termux_patch "0020-unofficial-support-adreno-830.patch"
+          apply_termux_patch "0021-unofficial-support-adreno-810-825-829.patch"
 
-      - name: Fix pthread → mtx
+      - name: Apply Turnip pthread→mtx fix (replaces 0007)
         run: |
           cd ~/mesa
-          sed -i 's/pthread_mutex_lock(&dev->pipeline_mutex)/mtx_lock(\&dev->pipeline_mutex)/g' src/freedreno/vulkan/tu_shader.cc || true
-          sed -i 's/pthread_mutex_unlock(&dev->pipeline_mutex)/mtx_unlock(\&dev->pipeline_mutex)/g' src/freedreno/vulkan/tu_shader.cc || true
+          sed -i 's/pthread_mutex_lock(&dev->pipeline_mutex)/mtx_lock(\&dev->pipeline_mutex)/g' src/freedreno/vulkan/tu_shader.cc
+          sed -i 's/pthread_mutex_unlock(&dev->pipeline_mutex)/mtx_unlock(\&dev->pipeline_mutex)/g' src/freedreno/vulkan/tu_shader.cc
+          echo "✔ tu_shader.cc: pthread_mutex → mtx_"
 
       - name: Override Vulkan API version
-        if: ${{ github.event.inputs.api_override != '' }}
+        if: github.event.inputs.api_override != ''
         run: |
-          set -e
           cd ~/mesa
-
           VER="${{ github.event.inputs.api_override }}"
-          VER_UNDERSCORE=$(echo $VER | tr '.' '_')
-
-          FILE=$(find src/freedreno/vulkan -maxdepth 1 \( -name "tu_device.c" -o -name "tu_device.cc" \) | head -n 1)
-
-          if [ -z "$FILE" ]; then
-            echo "ERROR: tu_device file not found"
-            ls src/freedreno/vulkan
+          DEVFILE=$(find src/freedreno/vulkan -maxdepth 1 -name 'tu_device.*' -print -quit)
+          if [ -z "$DEVFILE" ]; then
+            echo "❌ Could not find tu_device file"
             exit 1
           fi
+          echo "Forcing Vulkan API version to $VER in $DEVFILE"
+          sed -i "0,/VK_API_VERSION_[0-9_]*/s//VK_API_VERSION_${VER//\./_}/" "$DEVFILE"
 
-          echo "Patching $FILE → Vulkan $VER"
-
-          sed -i "0,/VK_API_VERSION_[0-9_]*/s//VK_API_VERSION_${VER_UNDERSCORE}/" "$FILE"
-
-      - name: Create cross file
+      - name: Create Meson cross file for ${{ matrix.arch }}
         run: |
           if [ "${{ matrix.arch }}" = "aarch64" ]; then
-            CPU=aarch64
-            TARGET=aarch64-linux-android
+            CPU="aarch64"
+            TARGET="aarch64-linux-android"
           else
-            CPU=armv7l
-            TARGET=armv7a-linux-androideabi
+            CPU="armv7l"
+            TARGET="armv7a-linux-androideabi"
           fi
-
           API=28
-          NDK_BIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
-
+          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           cat > ~/cross_file.txt << EOF
           [host_machine]
           system = 'linux'
@@ -116,18 +107,18 @@ jobs:
           [binaries]
           c = '$NDK_BIN/${TARGET}${API}-clang'
           cpp = '$NDK_BIN/${TARGET}${API}-clang++'
-           ar = '$NDK_BIN/llvm-ar'
-           strip = '$NDK_BIN/llvm-strip'
-           pkgconfig = 'pkg-config'
+          ar = '$NDK_BIN/llvm-ar'
+          strip = '$NDK_BIN/llvm-strip'
+          pkgconfig = 'pkg-config'
 
-           [built-in options]
+          [built-in options]
           c_args = ['-I/data/data/com.termux/files/usr/include']
           c_link_args = ['-L/data/data/com.termux/files/usr/lib', '-Wl,-rpath=/data/data/com.termux/files/usr/lib']
           EOF
 
-      - name: Configure Mesa
+      - name: Configure Mesa build for Turnip
         run: |
-          meson setup build \
+          meson setup build ~/mesa \
             --cross-file ~/cross_file.txt \
             -Dvulkan-drivers=freedreno \
             -Dgallium-drivers= \
@@ -147,25 +138,22 @@ jobs:
             -Ddri3=disabled \
             -Dshader-cache=enabled
 
-      - name: Build
-        run: |
-          ninja -C build
+      - name: Build Turnip
+        run: ninja -C build
 
-      - name: Package
+      - name: Package artifact for ${{ matrix.arch }}
         run: |
-          mkdir -p out
-          cp build/src/freedreno/vulkan/libvulkan_freedreno.so out/
-
+          mkdir -p turnip_out
+          cp build/src/freedreno/vulkan/libvulkan_freedreno.so turnip_out/
           if [ "${{ matrix.arch }}" = "arm" ]; then
-            NAME=turnip-${{ github.event.inputs.mesa_version }}-arm.tar.xz
+            TARNAME=turnip-${{ github.event.inputs.mesa_version }}-arm.tar.xz
           else
-            NAME=turnip-${{ github.event.inputs.mesa_version }}-aarch64.tar.xz
+            TARNAME=turnip-${{ github.event.inputs.mesa_version }}-aarch64.tar.xz
           fi
+          tar -cJf $TARNAME -C turnip_out .
+          echo "artifact_name=$TARNAME" >> $GITHUB_ENV
 
-          tar -cJf $NAME -C out .
-          echo "artifact_name=$NAME" >> $GITHUB_ENV
-
-      - name: Upload artifact
+      - name: Upload ${{ matrix.arch }} artifact
         uses: actions/upload-artifact@v4
         with:
           name: turnip-${{ github.event.inputs.mesa_version }}-${{ matrix.arch }}
