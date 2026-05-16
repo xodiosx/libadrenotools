@@ -111,7 +111,7 @@ jobs:
           cpp = '$NDK_BIN/${TARGET}${API}-clang++'
           ar = '$NDK_BIN/llvm-ar'
           strip = '$NDK_BIN/llvm-strip'
-          pkgconfig = 'pkg-config'
+          pkg-config = 'pkg-config'
 
           [built-in options]
           c_args = ['-I/data/data/com.termux/files/usr/include']
