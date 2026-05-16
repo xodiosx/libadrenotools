@@ -148,7 +148,7 @@ jobs:
         run: |
           meson setup build ~/mesa \
             --cross-file ~/cross_file.txt \
-            -Dvulkan-drivers=freedreno \          
+            -Dvulkan-drivers=freedreno \
             -Dprefix=/usr \
             -Dgbm=enabled \
             -Dopengl=true \
