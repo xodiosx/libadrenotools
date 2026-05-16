@@ -158,10 +158,9 @@ jobs:
             -Dgles1=disabled \
             -Dgles2=enabled \
             -Dglx=dri \
-            -Dllvm=enabled \
-            -Dshared-llvm=enabled \
+            -Dllvm=disabled \
             -Dplatforms=x11,wayland \
-            -Dgallium-drivers=llvmpipe,softpipe,virgl,zink \
+            -Dgallium-drivers=zink \
             -Dgallium-rusticl=true \
             -Dglvnd=enabled \
             -Dxmlconfig=disabled \
