@@ -107,13 +107,13 @@ jobs:
           NDK_BIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
 
           cat > ~/cross_file.txt << EOF
-       [host_machine]
-         system = 'linux'
-        cpu_family = '$CPU'
-        cpu = '$CPU'
+          [host_machine]
+          system = 'linux'
+          cpu_family = '$CPU'
+          cpu = '$CPU'
           endian = 'little'
 
-         [binaries]
+          [binaries]
           c = '$NDK_BIN/${TARGET}${API}-clang'
           cpp = '$NDK_BIN/${TARGET}${API}-clang++'
            ar = '$NDK_BIN/llvm-ar'
@@ -121,8 +121,8 @@ jobs:
            pkgconfig = 'pkg-config'
 
            [built-in options]
-         c_args = ['-I/data/data/com.termux/files/usr/include']
-         c_link_args = ['-L/data/data/com.termux/files/usr/lib', '-Wl,-rpath=/data/data/com.termux/files/usr/lib']
+          c_args = ['-I/data/data/com.termux/files/usr/include']
+          c_link_args = ['-L/data/data/com.termux/files/usr/lib', '-Wl,-rpath=/data/data/com.termux/files/usr/lib']
           EOF
 
       - name: Configure Mesa
