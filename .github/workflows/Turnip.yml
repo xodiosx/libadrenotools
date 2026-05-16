@@ -144,7 +144,6 @@ jobs:
             -Degl=disabled \
             -Dgles1=disabled \
             -Dgles2=disabled \
-            -Dshared-glapi=disabled \
             -Ddri3=disabled \
             -Dshader-cache=enabled
 
