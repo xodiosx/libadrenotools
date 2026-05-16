@@ -57,16 +57,25 @@ jobs:
             sudo touch /data/data/com.termux/files/usr/include/android_lf.h
           fi
 
-      - name: Install missing packages inside Termux (via proot)
+      # 🔨 Install missing development packages using proot + QEMU
+      - name: Install missing packages inside Termux (proot + QEMU)
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-user-static proot
+          sudo apt-get install -y qemu-user-static proot binfmt-support
 
+          # Create directories that must exist
+          sudo mkdir -p /data/data/com.termux/files/home
           sudo mkdir -p /data/data/com.termux/files/usr/etc
           echo "nameserver 8.8.8.8" | sudo tee /data/data/com.termux/files/usr/etc/resolv.conf > /dev/null
 
+          # Choose QEMU static binary for the target architecture
+          QEMU_ARCH="qemu-aarch64-static"
+          if [ "${{ matrix.arch }}" = "arm" ]; then QEMU_ARCH="qemu-arm-static"; fi
+
+          # Run proot with QEMU to execute ARM binaries
           proot \
             --rootfs=/data \
+            -q "/usr/bin/$QEMU_ARCH" \
             --bind=/proc \
             --bind=/sys \
             --bind=/dev \
@@ -74,10 +83,12 @@ jobs:
             /data/data/com.termux/files/usr/bin/bash -c "
               export PREFIX=/data/data/com.termux/files/usr
               export PATH=\$PREFIX/bin:\$PATH
+
               apt-get update
               apt-get install -y spirv-tools-dev libudev-dev libandroid-shmem libwayland libx11 libxext libxfixes libxshmfence libxxf86vm ncurses vulkan-loader zlib
             "
 
+          # Ensure cross‑compiler can read everything
           sudo chmod -R a+rX /data/data/com.termux/files/usr
 
       - name: Setup pkg-config wrapper (idirafter – no header conflicts)
