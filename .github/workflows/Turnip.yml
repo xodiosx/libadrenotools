@@ -106,11 +106,13 @@ jobs:
           sed -i "0,/VK_API_VERSION_[0-9_]*/s//VK_API_VERSION_${VER//\./_}/" "$DEVFILE"
 
       - name: Create Meson cross file for ${{ matrix.arch }}
-        run: |
-          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+        run: |           
+         if [ "${{ matrix.arch }}" = "aarch64" ]; then
+            CPU_FAMILY="aarch64"
             CPU="aarch64"
             TARGET="aarch64-linux-android"
           else
+            CPU_FAMILY="arm"
             CPU="armv7l"
             TARGET="armv7a-linux-androideabi"
           fi
@@ -119,23 +121,22 @@ jobs:
           cat > ~/cross_file.txt << EOF
           [host_machine]
           system = 'linux'
-          cpu_family = '$CPU'
+          cpu_family = '$CPU_FAMILY'
           cpu = '$CPU'
           endian = 'little'
-
+      
           [binaries]
           c = '$NDK_BIN/${TARGET}${API}-clang'
           cpp = '$NDK_BIN/${TARGET}${API}-clang++'
           ar = '$NDK_BIN/llvm-ar'
           strip = '$NDK_BIN/llvm-strip'
-          pkg-config = 'pkg-config'
-
+          pkgconfig = 'pkg-config'
+      
           [properties]
           pkg_config_path = '/data/data/com.termux/files/usr/lib/pkgconfig'
-         
+      
           [built-in options]
           c_args = ['-I/data/data/com.termux/files/usr/include']
-          c_link_args = ['-L/data/data/com.termux/files/usr/lib', '-Wl,-rpath=/data/data/com.termux/files/usr/lib']
           EOF
 
       - name: Configure Mesa build for Turnip
