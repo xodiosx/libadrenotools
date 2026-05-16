@@ -57,42 +57,26 @@ jobs:
             sudo touch /data/data/com.termux/files/usr/include/android_lf.h
           fi
 
-      # 🔨 Install missing development packages using proot + QEMU
-      - name: Install missing packages inside Termux (proot + QEMU)
+      - name: Install missing -dev packages into Termux sysroot
         run: |
-          sudo apt-get update
-          sudo apt-get install -y qemu-user-static proot binfmt-support
-          # check path
-           ls -l /data/data/com.termux/files/usr || true
-           ls -l /data/data/com.termux/files/usr/bin/bash || true
+          ARCH="aarch64"
+          if [ "${{ matrix.arch }}" = "arm" ]; then ARCH="arm"; fi
 
+          SPIRV_VERSION="1.4.350.0"
+          UDEV_VERSION="256.10"
 
-          # Create directories that must exist
-          sudo mkdir -p /data/data/com.termux/files/home
-          sudo mkdir -p /data/data/com.termux/files/usr/etc
-          echo "nameserver 8.8.8.8" | sudo tee /data/data/com.termux/files/usr/etc/resolv.conf > /dev/null
+          mkdir -p /tmp/termux-debs && cd /tmp/termux-debs
 
-          # Choose QEMU static binary for the target architecture
-          QEMU_ARCH="qemu-aarch64-static"
-          if [ "${{ matrix.arch }}" = "arm" ]; then QEMU_ARCH="qemu-arm-static"; fi
+          wget -q "https://packages.termux.dev/apt/termux-main/pool/main/s/spirv-tools/spirv-tools-dev_${SPIRV_VERSION}_${ARCH}.deb"
+          #wget -q ""
 
-          # Run proot with QEMU to execute ARM binaries
-          proot \
-            --rootfs=/ \
-            -q "/usr/bin/$QEMU_ARCH" \
-            --bind=/proc \
-            --bind=/sys \
-            --bind=/dev \
-            --cwd=/data/data/com.termux/files/home \
-            /data/data/com.termux/files/usr/bin/bash -c "
-              export PREFIX=/data/data/com.termux/files/usr
-              export PATH=\$PREFIX/bin:\$PATH
+          for deb in *.deb; do
+            dpkg-deb -x "$deb" /tmp/termux-debs/merged/
+          done
 
-              apt-get update
-              apt-get install -y spirv-tools-dev libudev-dev libandroid-shmem libwayland libx11 libxext libxfixes libxshmfence libxxf86vm ncurses vulkan-loader zlib
-            "
+          sudo cp -r /tmp/termux-debs/merged/data/data/com.termux/files/usr/* \
+                     /data/data/com.termux/files/usr/
 
-          # Ensure cross‑compiler can read everything
           sudo chmod -R a+rX /data/data/com.termux/files/usr
 
       - name: Setup pkg-config wrapper (idirafter – no header conflicts)
@@ -202,7 +186,8 @@ jobs:
             -Dshader-cache=disabled \
             -Dfreedreno-kmds=msm,kgsl \
             -Dxmlconfig=disabled \
-            -Dvalgrind=disabled
+            -Dvalgrind=disabled \
+            -Dudev=false
 
       - name: Build Turnip
         run: ninja -C build
