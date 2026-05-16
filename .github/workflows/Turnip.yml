@@ -73,6 +73,8 @@ jobs:
 
           sudo cp -r /tmp/spirv-debs/extracted/data/data/com.termux/files/usr/* \
                      /data/data/com.termux/files/usr/
+          sudo chmod -R 755 /data/data/com.termux/files/usr/lib
+          sudo chmod -R 755 /data/data/com.termux/files/usr/include
 
       - name: Setup pkg-config wrapper (idirafter – no header conflicts)
         run: |
