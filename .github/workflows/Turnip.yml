@@ -46,6 +46,17 @@ jobs:
           mkdir -p /data/data/com.termux/files/usr/tmp
           sudo chmod -R a+rX /data/data/com.termux/files/usr
 
+      - name: Provide android_lf.h to Termux sysroot
+        run: |
+          NDK_HEADER=$(find /opt/android-ndk-r27c -name android_lf.h -print -quit)
+          if [ -n "$NDK_HEADER" ]; then
+            sudo cp "$NDK_HEADER" /data/data/com.termux/files/usr/include/
+            echo "Copied $NDK_HEADER"
+          else
+            echo "WARNING: android_lf.h not found in NDK, creating empty file"
+            sudo touch /data/data/com.termux/files/usr/include/android_lf.h
+          fi
+
       - name: Clone Mesa
         run: |
           git clone --depth 1 --branch ${{ github.event.inputs.mesa_version }} \
@@ -115,7 +126,7 @@ jobs:
           echo "cpp = '${NDK_BIN}/${TARGET}${API}-clang++'" >> ~/cross_file.txt
           echo "ar = '${NDK_BIN}/llvm-ar'" >> ~/cross_file.txt
           echo "strip = '${NDK_BIN}/llvm-strip'" >> ~/cross_file.txt
-          echo "pkg-config = 'pkg-config'" >> ~/cross_file.txt
+          echo "pkgconfig = 'pkg-config'" >> ~/cross_file.txt
           echo "" >> ~/cross_file.txt
           echo "[properties]" >> ~/cross_file.txt
           echo "pkg_config_path = '/data/data/com.termux/files/usr/lib/pkgconfig'" >> ~/cross_file.txt
@@ -142,10 +153,9 @@ jobs:
             -Dgles1=disabled \
             -Dgles2=disabled \
             -Dshared-glapi=disabled \
-            -Dshader-cache=disabled \
+            -Dshader-cache=enabled \
             -Dfreedreno-kmds=msm,kgsl \
             -Dxmlconfig=disabled
-            
 
       - name: Build Turnip
         run: ninja -C build
