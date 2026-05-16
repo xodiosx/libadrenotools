@@ -78,7 +78,7 @@ jobs:
 
           # Run proot with QEMU to execute ARM binaries
           proot \
-            --rootfs=/data \
+            --rootfs=/ \
             -q "/usr/bin/$QEMU_ARCH" \
             --bind=/proc \
             --bind=/sys \
