@@ -4,38 +4,41 @@ on:
   workflow_dispatch:
     inputs:
       mesa_version:
-        description: 'Mesa version (e.g., mesa-26.0.6)'
+        description: Mesa version (e.g., mesa-26.0.6)
         required: true
-        default: 'main'
+        default: main
       api_override:
-        description: 'Vulkan API override version (e.g., 1.4.301)'
+        description: Vulkan API override (e.g., 1.4.301)
         required: false
-        default: '1.4.301'
+        default: 1.4.301
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     strategy:
       matrix:
         arch: [aarch64, arm]
 
     steps:
-      - name: Install host build tools
+      - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y meson ninja-build pkg-config python3-mako python3-pip \
-            glslang-tools flex bison curl ca-certificates git
+          sudo apt install -y \
+            meson ninja-build pkg-config python3 python3-mako \
+            glslang-tools flex bison curl git unzip
 
-      - name: Download Android NDK
+      - name: Setup Android NDK
         run: |
-          NDK_VERSION="r27c"
+          NDK_VERSION=r27c
           wget -q https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip
           unzip -q android-ndk-${NDK_VERSION}-linux.zip -d /opt
           echo "ANDROID_NDK_HOME=/opt/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
 
       - name: Setup Termux sysroot
         run: |
-          mkdir termux && cd termux
+          mkdir termux
+          cd termux
           wget -q https://github.com/xodiosx/Wine-arm64ce/releases/download/wine-14/termux-rootfs.tar
           tar xf termux-rootfs.tar
           sudo mv data /data
@@ -45,7 +48,8 @@ jobs:
 
       - name: Clone Mesa
         run: |
-          git clone --depth 1 --branch ${{ github.event.inputs.mesa_version }} \
+          git clone --depth 1 \
+            --branch "${{ github.event.inputs.mesa_version }}" \
             https://gitlab.freedesktop.org/mesa/mesa.git ~/mesa
 
       - name: Apply Termux patches
@@ -53,8 +57,9 @@ jobs:
           cd ~/mesa
 
           apply_patch() {
-            echo "Applying $1"
-            curl -sSfL https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/$1 | patch -N -p1
+            curl -sSfL \
+              https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/$1 \
+              | patch -N -p1
           }
 
           apply_patch 0000-disable-android-detection.patch
@@ -67,77 +72,58 @@ jobs:
           sed -i 's/pthread_mutex_lock(&dev->pipeline_mutex)/mtx_lock(\&dev->pipeline_mutex)/g' src/freedreno/vulkan/tu_shader.cc || true
           sed -i 's/pthread_mutex_unlock(&dev->pipeline_mutex)/mtx_unlock(\&dev->pipeline_mutex)/g' src/freedreno/vulkan/tu_shader.cc || true
 
-      - name: Override Vulkan API version (robust)
-        if: github.event.inputs.api_override != ''
+      - name: Override Vulkan API version
+        if: ${{ github.event.inputs.api_override != '' }}
         run: |
           set -e
-          VER="${{ github.event.inputs.api_override }}"
-          echo "Forcing Vulkan API version → $VER"
+          cd ~/mesa
 
-          FILE=$(find ~/mesa/src/freedreno/vulkan -maxdepth 1 \( -name "tu_device.c" -o -name "tu_device.cc" \) | head -n1)
+          VER="${{ github.event.inputs.api_override }}"
+          VER_UNDERSCORE=$(echo $VER | tr '.' '_')
+
+          FILE=$(find src/freedreno/vulkan -maxdepth 1 \( -name "tu_device.c" -o -name "tu_device.cc" \) | head -n 1)
 
           if [ -z "$FILE" ]; then
-            echo "❌ tu_device source not found!"
-            ls ~/mesa/src/freedreno/vulkan
+            echo "ERROR: tu_device file not found"
+            ls src/freedreno/vulkan
             exit 1
           fi
 
-          echo "✔ Found: $FILE"
+          echo "Patching $FILE → Vulkan $VER"
 
-          python3 - "$FILE" "$VER" <<'PY'
-import re, sys
-from pathlib import Path
-
-file = Path(sys.argv[1])
-ver = sys.argv[2].replace('.', '_')
-
-text = file.read_text()
-
-new_text, count = re.subn(
-    r'VK_API_VERSION_[0-9_]+',
-    f'VK_API_VERSION_{ver}',
-    text,
-    count=1
-)
-
-if count == 0:
-    raise SystemExit("❌ No VK_API_VERSION found")
-
-file.write_text(new_text)
-print(f"✔ Patched {file}")
-PY
+          sed -i "0,/VK_API_VERSION_[0-9_]*/s//VK_API_VERSION_${VER_UNDERSCORE}/" "$FILE"
 
       - name: Create cross file
         run: |
           if [ "${{ matrix.arch }}" = "aarch64" ]; then
-            CPU="aarch64"
-            TARGET="aarch64-linux-android"
+            CPU=aarch64
+            TARGET=aarch64-linux-android
           else
-            CPU="armv7l"
-            TARGET="armv7a-linux-androideabi"
+            CPU=armv7l
+            TARGET=armv7a-linux-androideabi
           fi
 
           API=28
-          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          NDK_BIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
 
           cat > ~/cross_file.txt << EOF
-          [host_machine]
-          system = 'linux'
-          cpu_family = '$CPU'
-          cpu = '$CPU'
-          endian = 'little'
+[host_machine]
+system = 'linux'
+cpu_family = '$CPU'
+cpu = '$CPU'
+endian = 'little'
 
-          [binaries]
-          c = '$NDK_BIN/${TARGET}${API}-clang'
-          cpp = '$NDK_BIN/${TARGET}${API}-clang++'
-          ar = '$NDK_BIN/llvm-ar'
-          strip = '$NDK_BIN/llvm-strip'
-          pkgconfig = 'pkg-config'
+[binaries]
+c = '$NDK_BIN/${TARGET}${API}-clang'
+cpp = '$NDK_BIN/${TARGET}${API}-clang++'
+ar = '$NDK_BIN/llvm-ar'
+strip = '$NDK_BIN/llvm-strip'
+pkgconfig = 'pkg-config'
 
-          [built-in options]
-          c_args = ['-I/data/data/com.termux/files/usr/include']
-          c_link_args = ['-L/data/data/com.termux/files/usr/lib', '-Wl,-rpath=/data/data/com.termux/files/usr/lib']
-          EOF
+[built-in options]
+c_args = ['-I/data/data/com.termux/files/usr/include']
+c_link_args = ['-L/data/data/com.termux/files/usr/lib', '-Wl,-rpath=/data/data/com.termux/files/usr/lib']
+EOF
 
       - name: Configure Mesa
         run: |
@@ -162,7 +148,8 @@ PY
             -Dshader-cache=enabled
 
       - name: Build
-        run: ninja -C build
+        run: |
+          ninja -C build
 
       - name: Package
         run: |
@@ -178,7 +165,7 @@ PY
           tar -cJf $NAME -C out .
           echo "artifact_name=$NAME" >> $GITHUB_ENV
 
-      - name: Upload
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: turnip-${{ github.event.inputs.mesa_version }}-${{ matrix.arch }}
