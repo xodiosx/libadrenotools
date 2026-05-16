@@ -19,19 +19,13 @@ jobs:
       matrix:
         arch: [aarch64, arm]
     steps:
-      - name: Install host build tools (minimal)
+      - name: Install host build tools (pip meson 1.4.0)
         run: |
           sudo apt update
-          sudo apt install -y meson ninja-build pkg-config python3-mako python3-pip \
+          sudo apt install -y ninja-build pkg-config python3-mako python3-pip \
             glslang-tools flex bison curl ca-certificates
-
-      - name: 
-        run: |
-           sudo apt update
-           sudo apt install -y ninja-build pkg-config python3-mako python3-pip \
-           glslang-tools flex bison curl ca-certificates
-           pip install --user meson==1.4.0   # or just 'meson' for latest
-           echo "$HOME/.local/bin" >> $GITHUB_PATH   # ensure pip-installed meson is found
+          pip install --user meson==1.4.0
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Download and setup Android NDK (manual)
         run: |
@@ -52,15 +46,6 @@ jobs:
           mkdir -p /data/data/com.termux/files/usr/tmp
           sudo chmod -R a+rX /data/data/com.termux/files/usr
 
-      - name: Create Bionic library symlinks for Meson
-        run: |
-          cd /data/data/com.termux/files/usr/lib
-           # Bionic combines these into libc.so
-           for lib in dl pthread rt; do
-            sudo ln -sf libc.so lib${lib}.so
-            done
-           ls -la libdl.so libpthread.so librt.so  # verify
-      
       - name: Clone Mesa
         run: |
           git clone --depth 1 --branch ${{ github.event.inputs.mesa_version }} \
@@ -78,8 +63,9 @@ jobs:
           apply_termux_patch "0000-disable-android-detection.patch"
           # 0007 replaced with direct sed fix (next step)
           apply_termux_patch "0014-replace-turnip-wait_timestamp_safe-assert.patch"
-          #apply_termux_patch "0019-UBWC_5-and-UBWC_6-support.patch"
           apply_termux_patch "0016-unofficial_support_adreno_710_720.patch"
+          # Uncomment if you need more Adreno support:
+          #apply_termux_patch "0019-UBWC_5-and-UBWC_6-support.patch"
           #apply_termux_patch "0020-unofficial-support-adreno-830.patch"
           #apply_termux_patch "0021-unofficial-support-adreno-810-825-829.patch"
 
@@ -90,8 +76,6 @@ jobs:
           sed -i 's/pthread_mutex_unlock(&dev->pipeline_mutex)/mtx_unlock(\&dev->pipeline_mutex)/g' src/freedreno/vulkan/tu_shader.cc
           echo "✔ tu_shader.cc: pthread_mutex → mtx_"
 
-       
-      
       - name: Override Vulkan API version
         if: github.event.inputs.api_override != ''
         run: |
@@ -106,8 +90,8 @@ jobs:
           sed -i "0,/VK_API_VERSION_[0-9_]*/s//VK_API_VERSION_${VER//\./_}/" "$DEVFILE"
 
       - name: Create Meson cross file for ${{ matrix.arch }}
-        run: |           
-         if [ "${{ matrix.arch }}" = "aarch64" ]; then
+        run: |
+          if [ "${{ matrix.arch }}" = "aarch64" ]; then
             CPU_FAMILY="aarch64"
             CPU="aarch64"
             TARGET="aarch64-linux-android"
@@ -118,49 +102,50 @@ jobs:
           fi
           API=28
           NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          cat > ~/cross_file.txt << EOF
-          [host_machine]
-          system = 'linux'
-          cpu_family = '$CPU_FAMILY'
-          cpu = '$CPU'
-          endian = 'little'
-      
-          [binaries]
-          c = '$NDK_BIN/${TARGET}${API}-clang'
-          cpp = '$NDK_BIN/${TARGET}${API}-clang++'
-          ar = '$NDK_BIN/llvm-ar'
-          strip = '$NDK_BIN/llvm-strip'
-          pkgconfig = 'pkg-config'
-      
-          [properties]
-          pkg_config_path = '/data/data/com.termux/files/usr/lib/pkgconfig'
-      
-          [built-in options]
-          c_args = ['-I/data/data/com.termux/files/usr/include']
-          EOF
+
+          # Write cross file without heredoc (avoids YAML indentation bugs)
+          > ~/cross_file.txt
+          echo "[host_machine]" >> ~/cross_file.txt
+          echo "system = 'linux'" >> ~/cross_file.txt
+          echo "cpu_family = '${CPU_FAMILY}'" >> ~/cross_file.txt
+          echo "cpu = '${CPU}'" >> ~/cross_file.txt
+          echo "endian = 'little'" >> ~/cross_file.txt
+          echo "" >> ~/cross_file.txt
+          echo "[binaries]" >> ~/cross_file.txt
+          echo "c = '${NDK_BIN}/${TARGET}${API}-clang'" >> ~/cross_file.txt
+          echo "cpp = '${NDK_BIN}/${TARGET}${API}-clang++'" >> ~/cross_file.txt
+          echo "ar = '${NDK_BIN}/llvm-ar'" >> ~/cross_file.txt
+          echo "strip = '${NDK_BIN}/llvm-strip'" >> ~/cross_file.txt
+          echo "pkgconfig = 'pkg-config'" >> ~/cross_file.txt
+          echo "" >> ~/cross_file.txt
+          echo "[properties]" >> ~/cross_file.txt
+          echo "pkg_config_path = '/data/data/com.termux/files/usr/lib/pkgconfig'" >> ~/cross_file.txt
+          echo "" >> ~/cross_file.txt
+          echo "[built-in options]" >> ~/cross_file.txt
+          echo "c_args = ['-I/data/data/com.termux/files/usr/include']" >> ~/cross_file.txt
 
       - name: Configure Mesa build for Turnip
         run: |
-         meson setup build ~/mesa \
-           --cross-file ~/cross_file.txt \
-          -Dvulkan-drivers=freedreno \
-          -Dgallium-drivers= \
-          -Dplatforms=x11 \
-          -Dandroid-libbacktrace=disabled \
-          -Dllvm=disabled \
-          -Dbuildtype=release \
-          -Dprefix=/usr \
-          -Dstrip=true \
-          -Dglx=disabled \
-          -Dgbm=disabled \
-          -Dopengl=false \
-          -Degl=disabled \
-          -Dgles1=disabled \
-          -Dgles2=disabled \
-          -Dshared-glapi=disabled \
-          -Dshader-cache=enabled \
-          -Dfreedreno-kmds=msm,kgsl \
-          -Dxmlconfig=disabled
+          meson setup build ~/mesa \
+            --cross-file ~/cross_file.txt \
+            -Dvulkan-drivers=freedreno \
+            -Dgallium-drivers= \
+            -Dplatforms=x11 \
+            -Dandroid-libbacktrace=disabled \
+            -Dllvm=disabled \
+            -Dbuildtype=release \
+            -Dprefix=/usr \
+            -Dstrip=true \
+            -Dglx=disabled \
+            -Dgbm=disabled \
+            -Dopengl=false \
+            -Degl=disabled \
+            -Dgles1=disabled \
+            -Dgles2=disabled \
+            -Dshared-glapi=disabled \
+            -Dshader-cache=enabled \
+            -Dfreedreno-kmds=msm,kgsl \
+            -Dxmlconfig=disabled
 
       - name: Build Turnip
         run: ninja -C build
