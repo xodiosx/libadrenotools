@@ -150,13 +150,12 @@ jobs:
             --cross-file ~/cross_file.txt \
             -Dvulkan-drivers=freedreno \
             -Dprefix=/usr \
-            -Dgbm=enabled \
-            -Dopengl=true \
+            -Dgbm=disabled \
+            -Dopengl=false \
             -Degl=disabled \
             -Degl-native-platform=x11 \
             -Dgles1=disabled \
-            -Dgles2=enabled \
-            -Dglx=dri \
+            -Dgles2=disabled \
             -Dllvm=disabled \
             -Dplatforms=x11 \
             -Dgallium-drivers= \
