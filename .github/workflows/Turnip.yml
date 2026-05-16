@@ -119,7 +119,8 @@ jobs:
           echo "cpp = '${NDK_BIN}/${TARGET}${API}-clang++'" >> ~/cross_file.txt
           echo "ar = '${NDK_BIN}/llvm-ar'" >> ~/cross_file.txt
           echo "strip = '${NDK_BIN}/llvm-strip'" >> ~/cross_file.txt
-          echo "pkgconfig = 'pkg-config'" >> ~/cross_file.txt
+          echo "pkg_config_path = '/data/data/com.termux/files/usr/lib/pkgconfig'" >> ~/cross_file.txt    
+          echo "pkg-config = '${pkg_config_path}'" >> ~/cross_file.txt
           echo "" >> ~/cross_file.txt
           echo "[properties]" >> ~/cross_file.txt
           echo "pkg_config_path = '/data/data/com.termux/files/usr/lib/pkgconfig'" >> ~/cross_file.txt
