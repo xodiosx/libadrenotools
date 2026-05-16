@@ -57,27 +57,24 @@ jobs:
             sudo touch /data/data/com.termux/files/usr/include/android_lf.h
           fi
 
-      - name: Install missing -dev packages into Termux sysroot
+      - name: Install SPIRV-Tools into Termux sysroot
         run: |
-          ARCH="aarch64"
-          if [ "${{ matrix.arch }}" = "arm" ]; then ARCH="arm"; fi
+          ARCH_DEB="aarch64"
+          if [ "${{ matrix.arch }}" = "arm" ]; then ARCH_DEB="arm"; fi
 
-          SPIRV_VERSION="1.4.350.0"
-          UDEV_VERSION="256.10"
+          mkdir -p /tmp/spirv-debs && cd /tmp/spirv-debs
 
-          mkdir -p /tmp/termux-debs && cd /tmp/termux-debs
-
-          wget -q "https://packages.termux.dev/apt/termux-main/pool/main/s/spirv-tools/spirv-tools-dev_${SPIRV_VERSION}_${ARCH}.deb"
-          #wget -q ""
+          #wget -q "https://packages.termux.dev/apt/termux-main/pool/main/s/spirv-tools/spirv-tools_2025.1_${ARCH_DEB}.deb"
+          wget -q "https://packages.termux.dev/apt/termux-main/pool/main/s/spirv-tools/spirv-tools_1.4.350.0_aarch64.deb"
 
           for deb in *.deb; do
-            dpkg-deb -x "$deb" /tmp/termux-debs/merged/
+            dpkg-deb -x "$deb" /tmp/spirv-debs/extracted/
           done
 
-          sudo cp -r /tmp/termux-debs/merged/data/data/com.termux/files/usr/* \
+          sudo cp -r /tmp/spirv-debs/extracted/data/data/com.termux/files/usr/* \
                      /data/data/com.termux/files/usr/
-
-          sudo chmod -R a+rX /data/data/com.termux/files/usr
+          sudo chmod -R 755 /data/data/com.termux/files/usr/lib
+          sudo chmod -R 755 /data/data/com.termux/files/usr/include
 
       - name: Setup pkg-config wrapper (idirafter – no header conflicts)
         run: |
