@@ -142,10 +142,10 @@ jobs:
             -Dgles1=disabled \
             -Dgles2=disabled \
             -Dshared-glapi=disabled \
-            -Dshader-cache=enabled \
+            -Dshader-cache=disabled \
             -Dfreedreno-kmds=msm,kgsl \
-            -Dxmlconfig=disabled \
-            -Dlibarchive=disabled
+            -Dxmlconfig=disabled
+            
 
       - name: Build Turnip
         run: ninja -C build
