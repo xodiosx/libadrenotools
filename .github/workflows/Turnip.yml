@@ -149,23 +149,23 @@ jobs:
           meson setup build ~/mesa \
             --cross-file ~/cross_file.txt \
             -Dvulkan-drivers=freedreno \
-            -Dgallium-drivers= \
-            -Dplatforms=x11 \
-            -Dandroid-libbacktrace=disabled \
-            -Dllvm=disabled \
-            -Dbuildtype=release \
+            
             -Dprefix=/usr \
-            -Dstrip=true \
-            -Dglx=disabled \
-            -Dgbm=disabled \
-            -Dopengl=false \
-            -Degl=disabled \
+            -Dgbm=enabled \
+            -Dopengl=true \
+            -Degl=enabled \
+            -Degl-native-platform=x11 \
             -Dgles1=disabled \
-            -Dgles2=disabled \
-            -Dshared-glapi=disabled \
-            -Dshader-cache=enabled \
-            -Dfreedreno-kmds=msm,kgsl \
+            -Dgles2=enabled \
+            -Dglx=dri \
+            -Dllvm=enabled \
+            -Dshared-llvm=enabled \
+            -Dplatforms=x11,wayland \
+            -Dgallium-drivers=llvmpipe,softpipe,virgl,zink \
+            -Dgallium-rusticl=true \
+            -Dglvnd=enabled \
             -Dxmlconfig=disabled \
+            -Dfreedreno-kmds=msm,kgsl \
             -Dvalgrind=disabled
 
       - name: Build Turnip
