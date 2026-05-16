@@ -46,6 +46,12 @@ jobs:
           mkdir -p /data/data/com.termux/files/usr/tmp
           sudo chmod -R a+rX /data/data/com.termux/files/usr
 
+      # 👇 NEW: copy android_lf.h from NDK into the Termux sysroot
+      - name: Copy android_lf.h to Termux sysroot
+        run: |
+          sudo cp /opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/android_lf.h \
+                  /data/data/com.termux/files/usr/include/
+
       - name: Clone Mesa
         run: |
           git clone --depth 1 --branch ${{ github.event.inputs.mesa_version }} \
@@ -103,7 +109,6 @@ jobs:
           API=28
           NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
-          # Write cross file without heredoc (avoids YAML indentation bugs)
           > ~/cross_file.txt
           echo "[host_machine]" >> ~/cross_file.txt
           echo "system = 'linux'" >> ~/cross_file.txt
@@ -121,8 +126,7 @@ jobs:
           echo "[properties]" >> ~/cross_file.txt
           echo "pkg_config_path = '/data/data/com.termux/files/usr/lib/pkgconfig'" >> ~/cross_file.txt
           echo "" >> ~/cross_file.txt
-          echo "[built-in options]" >> ~/cross_file.txt
-           
+          # No global c_args – pkg-config adds -I flags only when needed
 
       - name: Configure Mesa build for Turnip
         run: |
