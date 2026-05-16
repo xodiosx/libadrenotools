@@ -57,14 +57,13 @@ jobs:
             sudo touch /data/data/com.termux/files/usr/include/android_lf.h
           fi
 
-      # 🔨 Wrapper that converts Termux -I into -isystem (keeps system headers first)
-      - name: Setup pkg-config wrapper
+      - name: Setup pkg-config wrapper (idirafter – no header conflicts)
         run: |
           sudo tee /usr/local/bin/termux-pkg-config > /dev/null << 'SCRIPT'
           #!/bin/bash
           export PKG_CONFIG_PATH=/data/data/com.termux/files/usr/lib/pkgconfig
           /usr/bin/pkg-config "$@" | \
-            sed 's|-I/data/data/com.termux/files/usr/include|-isystem /data/data/com.termux/files/usr/include|g'
+            sed 's|-I/data/data/com.termux/files/usr/include|-idirafter /data/data/com.termux/files/usr/include|g'
           SCRIPT
           sudo chmod +x /usr/local/bin/termux-pkg-config
 
@@ -140,7 +139,6 @@ jobs:
           echo "pkgconfig = 'termux-pkg-config'" >> ~/cross_file.txt
           echo "" >> ~/cross_file.txt
           echo "[properties]" >> ~/cross_file.txt
-          # Not setting pkg_config_path here – the wrapper already exports it
           echo "" >> ~/cross_file.txt
           # No built-in options – the wrapper handles the include path
 
@@ -149,18 +147,22 @@ jobs:
           meson setup build ~/mesa \
             --cross-file ~/cross_file.txt \
             -Dvulkan-drivers=freedreno \
+            -Dgallium-drivers= \
+            -Dplatforms=x11 \
+            -Dandroid-libbacktrace=disabled \
+            -Dllvm=disabled \
+            -Dbuildtype=release \
             -Dprefix=/usr \
+            -Dstrip=true \
             -Dgbm=disabled \
             -Dopengl=false \
             -Degl=disabled \
-            -Degl-native-platform=x11 \
             -Dgles1=disabled \
             -Dgles2=disabled \
-            -Dllvm=disabled \
-            -Dplatforms=x11 \
-            -Dgallium-drivers= \
-            -Dxmlconfig=disabled \
+            -Dshared-glapi=disabled \
+            -Dshader-cache=disabled \
             -Dfreedreno-kmds=msm,kgsl \
+            -Dxmlconfig=disabled \
             -Dvalgrind=disabled
 
       - name: Build Turnip
