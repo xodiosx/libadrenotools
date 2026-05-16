@@ -165,7 +165,8 @@ jobs:
             -Dshared-glapi=disabled \
             -Dshader-cache=enabled \
             -Dfreedreno-kmds=msm,kgsl \
-            -Dxmlconfig=disabled
+            -Dxmlconfig=disabled \
+            -Dvalgrind=disabled
 
       - name: Build Turnip
         run: ninja -C build
