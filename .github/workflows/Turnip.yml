@@ -122,7 +122,7 @@ jobs:
           echo "pkg_config_path = '/data/data/com.termux/files/usr/lib/pkgconfig'" >> ~/cross_file.txt
           echo "" >> ~/cross_file.txt
           echo "[built-in options]" >> ~/cross_file.txt
-          echo "c_args = ['-I/data/data/com.termux/files/usr/include']" >> ~/cross_file.txt
+           
 
       - name: Configure Mesa build for Turnip
         run: |
