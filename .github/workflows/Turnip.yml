@@ -75,7 +75,7 @@ jobs:
               export PREFIX=/data/data/com.termux/files/usr
               export PATH=\$PREFIX/bin:\$PATH
               apt-get update
-              apt-get install -y spirv-tools-dev libudev-dev TERMUX_PKG_DEPENDS="libandroid-shmem libwayland libx11 libxext libxfixes libxshmfence libxxf86vm ncurses vulkan-loader zlib
+              apt-get install -y spirv-tools-dev libudev-dev libandroid-shmem libwayland libx11 libxext libxfixes libxshmfence libxxf86vm ncurses vulkan-loader zlib
             "
 
           sudo chmod -R a+rX /data/data/com.termux/files/usr
