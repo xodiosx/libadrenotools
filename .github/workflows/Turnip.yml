@@ -45,6 +45,9 @@ jobs:
           sudo chown -R $(whoami):$(whoami) /data
           mkdir -p /data/data/com.termux/files/usr/tmp
           sudo chmod -R a+rX /data/data/com.termux/files/usr
+          ls -la /data/data/com.termux/files/usr/lib/pkgconfig/ || echo "Directory missing!"
+          echo "---"
+          cat /data/data/com.termux/files/usr/lib/pkgconfig/libdrm.pc 2>/dev/null || echo "libdrm.pc NOT FOUND"
 
       - name: Clone Mesa
         run: |
