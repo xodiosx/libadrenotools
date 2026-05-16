@@ -57,6 +57,17 @@ jobs:
             sudo touch /data/data/com.termux/files/usr/include/android_lf.h
           fi
 
+      # 🔨 Wrapper that converts Termux -I into -isystem (keeps system headers first)
+      - name: Setup pkg-config wrapper
+        run: |
+          sudo tee /usr/local/bin/termux-pkg-config > /dev/null << 'SCRIPT'
+          #!/bin/bash
+          export PKG_CONFIG_PATH=/data/data/com.termux/files/usr/lib/pkgconfig
+          /usr/bin/pkg-config "$@" | \
+            sed 's|-I/data/data/com.termux/files/usr/include|-isystem /data/data/com.termux/files/usr/include|g'
+          SCRIPT
+          sudo chmod +x /usr/local/bin/termux-pkg-config
+
       - name: Clone Mesa
         run: |
           git clone --depth 1 --branch ${{ github.event.inputs.mesa_version }} \
@@ -126,16 +137,15 @@ jobs:
           echo "cpp = '${NDK_BIN}/${TARGET}${API}-clang++'" >> ~/cross_file.txt
           echo "ar = '${NDK_BIN}/llvm-ar'" >> ~/cross_file.txt
           echo "strip = '${NDK_BIN}/llvm-strip'" >> ~/cross_file.txt
-          echo "pkgconfig = 'pkg-config'" >> ~/cross_file.txt
+          echo "pkgconfig = 'termux-pkg-config'" >> ~/cross_file.txt
           echo "" >> ~/cross_file.txt
           echo "[properties]" >> ~/cross_file.txt
-          echo "pkg_config_path = '/data/data/com.termux/files/usr/lib/pkgconfig'" >> ~/cross_file.txt
+          # Not setting pkg_config_path here – the wrapper already exports it
           echo "" >> ~/cross_file.txt
-          # No global c_args – pkg-config adds -I flags only when needed
+          # No built-in options – the wrapper handles the include path
 
       - name: Configure Mesa build for Turnip
         run: |
-          export PKG_CONFIG_PATH=/data/data/com.termux/files/usr/lib/pkgconfig
           meson setup build ~/mesa \
             --cross-file ~/cross_file.txt \
             -Dvulkan-drivers=freedreno \
