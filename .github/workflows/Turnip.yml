@@ -25,6 +25,14 @@ jobs:
           sudo apt install -y meson ninja-build pkg-config python3-mako python3-pip \
             glslang-tools flex bison curl ca-certificates
 
+      - name: 
+        run: |
+           sudo apt update
+           sudo apt install -y ninja-build pkg-config python3-mako python3-pip \
+           glslang-tools flex bison curl ca-certificates
+           pip install --user meson==1.4.0   # or just 'meson' for latest
+           echo "$HOME/.local/bin" >> $GITHUB_PATH   # ensure pip-installed meson is found
+
       - name: Download and setup Android NDK (manual)
         run: |
           NDK_VERSION="r27c"
