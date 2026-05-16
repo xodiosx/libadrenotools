@@ -128,24 +128,26 @@ jobs:
 
       - name: Configure Mesa build for Turnip
         run: |
-          meson setup build ~/mesa \
-            --cross-file ~/cross_file.txt \
-            -Dvulkan-drivers=freedreno \
-            -Dgallium-drivers= \
-            -Dplatforms=x11 \
-            -Dandroid-libbacktrace=disabled \
-            -Dllvm=disabled \
-            -Dbuildtype=release \
-            -Dprefix=/usr \
-            -Dstrip=true \
-            -Dglx=disabled \
-            -Dgbm=disabled \
-            -Dopengl=false \
-            -Degl=disabled \
-            -Dgles1=disabled \
-            -Dgles2=disabled \
-            -Ddri3=disabled \
-            -Dshader-cache=enabled
+         meson setup build ~/mesa \
+           --cross-file ~/cross_file.txt \
+          -Dvulkan-drivers=freedreno \
+          -Dgallium-drivers= \
+          -Dplatforms=x11 \
+          -Dandroid-libbacktrace=disabled \
+          -Dllvm=disabled \
+          -Dbuildtype=release \
+          -Dprefix=/usr \
+          -Dstrip=true \
+          -Dglx=disabled \
+          -Dgbm=disabled \
+          -Dopengl=false \
+          -Degl=disabled \
+          -Dgles1=disabled \
+          -Dgles2=disabled \
+          -Dshared-glapi=disabled \
+          -Dshader-cache=enabled \
+          -Dfreedreno-kmds=msm,kgsl \
+          -Dxmlconfig=disabled
 
       - name: Build Turnip
         run: ninja -C build
