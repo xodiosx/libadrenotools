@@ -179,8 +179,6 @@ jobs:
             -Degl=disabled \
             -Dgles1=disabled \
             -Dgles2=disabled \
-            -Dshared-glapi=disabled \
-            -Dshader-cache=disabled \
             -Dfreedreno-kmds=msm,kgsl \
             -Dxmlconfig=disabled \
             -Dvalgrind=disabled \
