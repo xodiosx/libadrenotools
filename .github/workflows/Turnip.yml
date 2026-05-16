@@ -130,6 +130,9 @@ jobs:
           strip = '$NDK_BIN/llvm-strip'
           pkg-config = 'pkg-config'
 
+          [properties]
+          pkg_config_path = '/data/data/com.termux/files/usr/lib/pkgconfig'
+         
           [built-in options]
           c_args = ['-I/data/data/com.termux/files/usr/include']
           c_link_args = ['-L/data/data/com.termux/files/usr/lib', '-Wl,-rpath=/data/data/com.termux/files/usr/lib']
