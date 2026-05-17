@@ -1,4 +1,4 @@
-name: Build Turnip for Android (SurfaceFlinger + AHB, aarch64)
+name: Build Turnip for Android (SurfaceFlinger + AHB, Vulkan 1.4)
 
 on:
   workflow_dispatch:
@@ -10,11 +10,14 @@ on:
       api_override:
         description: 'Vulkan API override version (e.g., 1.4.301)'
         required: false
-        default: ''
+        default: '1.4.301'
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [aarch64]      # Hardcoded pure 64-bit focus
     steps:
       - name: Install host tools (meson 1.4.0)
         run: |
@@ -27,92 +30,79 @@ jobs:
         run: |
           NDK_VERSION="r27c"
           NDK_ZIP="android-ndk-${NDK_VERSION}-linux.zip"
-          wget -q "https://dl.google.com/android/repository/${NDK_ZIP}"
+          wget -q "https://google.com{NDK_ZIP}"
           unzip -q ${NDK_ZIP} -d /opt
           echo "ANDROID_NDK_HOME=/opt/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
           chmod +x /opt/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/*
 
-      # ---------- Dummy libdrm for pkg-config ----------
-      - name: Create dummy libdrm.pc
-        run: |
-          sudo mkdir -p /usr/local/lib/pkgconfig
-          sudo tee /usr/local/lib/pkgconfig/libdrm.pc > /dev/null << 'EOF'
-          prefix=/usr/local
-          libdir=${prefix}/lib
-          includedir=${prefix}/include
-
-          Name: libdrm
-          Description: Userspace interface to kernel DRM services (stub)
-          Version: 2.4.131
-          Libs: -L${libdir} -ldrm
-          Cflags: -I${includedir}
-          EOF
-          echo "✔ Dummy libdrm.pc created"
-
       - name: Clone Mesa
         run: |
           git clone --depth 1 --branch ${{ github.event.inputs.mesa_version }} \
-            https://gitlab.freedesktop.org/mesa/mesa.git ~/mesa
+            https://freedesktop.org ~/mesa
 
-      # -------------------- Patches (Turnip + Android) --------------------
+      # -------------------- Patches (Ported from Gist logic) --------------------
       - name: Apply necessary patches
         run: |
           cd ~/mesa
-          # Disable build-time Android detection
-          curl -sSfL "https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/0000-disable-android-detection.patch" | patch -N -p1
+          # Disable traditional desktop-Linux runtime asset probing logic
+          curl -sSfL "https://githubusercontent.com" | patch -N -p1
 
-          # pthread_mutex -> mtx_ fix (Bionic compatibility)
+          # pthread_mutex -> mtx_ translation layer
           sed -i 's/pthread_mutex_lock(&dev->pipeline_mutex)/mtx_lock(\&dev->pipeline_mutex)/g' src/freedreno/vulkan/tu_shader.cc
           sed -i 's/pthread_mutex_unlock(&dev->pipeline_mutex)/mtx_unlock(\&dev->pipeline_mutex)/g' src/freedreno/vulkan/tu_shader.cc
 
-          # Optional: Adreno 710/720 support
-          curl -sSfL "https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/0016-unofficial_support_adreno_710_720.patch" | patch -N -p1
+          # Inject Qualcomm Adreno 7xx architecture mappings
+          curl -sSfL "https://githubusercontent.com" | patch -N -p1
 
-      # -------------------- API Version Override (fixed) --------------------
+      # -------------------- API Version Override --------------------
       - name: Override Vulkan API version
         if: github.event.inputs.api_override != ''
         run: |
           cd ~/mesa
           VER="${{ github.event.inputs.api_override }}"
-          DEVFILE=$(find src/freedreno/vulkan -maxdepth 1 -name 'tu_device.*' -print -quit)
+          
+          DEVFILE=$(find src/freedreno/vulkan -name 'tu_device.cc' -o -name 'tu_device.c' -print -quit)
           if [ -z "$DEVFILE" ]; then
-            echo "❌ Could not find tu_device file"
+            echo "❌ Could not find tu_device compilation targets"
             exit 1
           fi
+          
           MAJOR=$(echo "$VER" | cut -d. -f1)
           MINOR=$(echo "$VER" | cut -d. -f2)
           PATCH=$(echo "$VER" | cut -d. -f3)
-          echo "Forcing API version to ${MAJOR}.${MINOR}.${PATCH} in $DEVFILE"
-          sed -i -E "s/(api[_ ]?[Vv]ersion\s*=\s*).*;/\1VK_MAKE_API_VERSION(${MAJOR}, ${MINOR}, ${PATCH});/" "$DEVFILE"
+          echo "Forcing compilation profile targeting Vulkan ${MAJOR}.${MINOR}.${PATCH} inside $DEVFILE"
+          
+          # Match against modern macro layouts
+          if grep -q "TU_API_VERSION" "$DEVFILE"; then
+            sed -i "s/#define TU_API_VERSION .*/#define TU_API_VERSION VK_MAKE_VERSION($MAJOR, $MINOR, $PATCH)/g" "$DEVFILE"
+          else
+            sed -i -E "s/(api[_ ]?[Vv]ersion\s*=\s*).*;/\1VK_MAKE_API_VERSION(${MAJOR}, ${MINOR}, ${PATCH});/" "$DEVFILE"
+          fi
 
-      # -------------------- Cross file (Android + aarch64) --------------------
-      - name: Create Meson cross file
+      # -------------------- Cross file (Pure Android Layout) --------------------
+      - name: Create Meson cross file for ${{ matrix.arch }}
         run: |
-          mkdir -p ~/stub_includes
-          touch ~/stub_includes/xf86drm.h
-
-          API_LEVEL=28
+          CPU_FAMILY="aarch64"
+          CPU="aarch64"
+          TARGET="aarch64-linux-android"
+          API_LEVEL=28 # Android Pie fallback baseline
           NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
           > ~/cross_file.txt
           echo "[host_machine]" >> ~/cross_file.txt
           echo "system = 'android'" >> ~/cross_file.txt
-          echo "cpu_family = 'aarch64'" >> ~/cross_file.txt
-          echo "cpu = 'aarch64'" >> ~/cross_file.txt
+          echo "cpu_family = '${CPU_FAMILY}'" >> ~/cross_file.txt
+          echo "cpu = '${CPU}'" >> ~/cross_file.txt
           echo "endian = 'little'" >> ~/cross_file.txt
           echo "" >> ~/cross_file.txt
           echo "[binaries]" >> ~/cross_file.txt
-          echo "c = '${NDK_BIN}/aarch64-linux-android${API_LEVEL}-clang'" >> ~/cross_file.txt
-          echo "cpp = '${NDK_BIN}/aarch64-linux-android${API_LEVEL}-clang++'" >> ~/cross_file.txt
+          echo "c = '${NDK_BIN}/${TARGET}${API_LEVEL}-clang'" >> ~/cross_file.txt
+          echo "cpp = '${NDK_BIN}/${TARGET}${API_LEVEL}-clang++'" >> ~/cross_file.txt
           echo "ar = '${NDK_BIN}/llvm-ar'" >> ~/cross_file.txt
           echo "strip = '${NDK_BIN}/llvm-strip'" >> ~/cross_file.txt
-          echo "pkgconfig = 'pkg-config'" >> ~/cross_file.txt
-          echo "[built-in options]" >> ~/cross_file.txt
-          echo "c_args = ['-isystem', '${HOME}/stub_includes']" >> ~/cross_file.txt
-          echo "cpp_args = ['-isystem', '${HOME}/stub_includes']" >> ~/cross_file.txt
+          echo "pkg-config = 'pkg-config'" >> ~/cross_file.txt
 
-
-      # -------------------- Configure (Android + Turnip only) --------------------
+      # -------------------- Configure (Ported Gist Flags) --------------------
       - name: Configure Mesa build for Turnip
         run: |
           meson setup build ~/mesa \
@@ -133,35 +123,28 @@ jobs:
             -Dglx=disabled \
             -Dshared-glapi=disabled \
             -Dshader-cache=disabled \
-            -Dfreedreno-kmds=msm,kgsl \
+            -Dfreedreno-kmds=kgsl \
             -Dxmlconfig=disabled \
             -Dvalgrind=disabled \
             -Dzstd=disabled \
             -Dandroid-libbacktrace=disabled \
             -Dlibarchive:crypto=disabled \
             -Dlibarchive:openssl=disabled \
-            -Dlibarchive:iconv=disabled \
-            -Dlibarchive:bzip2=disabled \
-            -Dlibarchive:lz4=disabled \
-            -Dlibarchive:lzo=disabled \
-            -Dlibarchive:zstd=disabled \
-            -Dlibarchive:xz=disabled \
-            -Dlibarchive:zlib=disabled
-
+            -Dlibarchive:iconv=disabled
 
       - name: Build Turnip
         run: ninja -C build
 
-      - name: Package artifact
+      - name: Package artifact for ${{ matrix.arch }}
         run: |
           mkdir -p turnip_out
           cp build/src/freedreno/vulkan/libvulkan_freedreno.so turnip_out/
-          TARNAME=turnip-android-${{ github.event.inputs.mesa_version }}-aarch64.tar.xz
+          TARNAME=turnip-surfaceflinger-${{ github.event.inputs.mesa_version }}-aarch64.tar.xz
           tar -cJf $TARNAME -C turnip_out .
-          echo "artifact_name=$TARNAME" >> $GITHUB_ENV
+          echo "TAR_NAME=$TARNAME" >> $GITHUB_ENV
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: turnip-android-${{ github.event.inputs.mesa_version }}-aarch64
-          path: turnip-android-${{ github.event.inputs.mesa_version }}-*.tar.xz
+          name: turnip-surfaceflinger-${{ github.event.inputs.mesa_version }}-${{ matrix.arch }}
+          path: turnip-surfaceflinger-*.tar.xz
