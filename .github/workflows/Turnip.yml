@@ -94,6 +94,10 @@ jobs:
       - name: Apply Termux Bionic patches
         run: |
           cd ~/mesa
+          sed -i "s/dependency('libudev',/dependency('libudev', required : false, disabler : true, /g" meson.build
+          # Prevent Meson from finding the header on the runner system
+          sed -i "s/has_header('libudev.h')/false/g" meson.build
+          echo "✔ Successfully stripped libudev from Mesa build files"
           apply_termux_patch() {
             local patchfile="$1"
             echo "Applying $patchfile..."
