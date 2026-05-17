@@ -26,7 +26,7 @@ jobs:
           pip install --user meson==1.4.0
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-            - name: Download and setup Android NDK (r27c)
+      - name: Download and setup Android NDK (r27c)
         run: |
           NDK_VERSION="r27c"
           NDK_ZIP="android-ndk-${NDK_VERSION}-linux.zip"
