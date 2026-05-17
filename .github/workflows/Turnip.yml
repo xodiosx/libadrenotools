@@ -119,12 +119,31 @@ jobs:
        
       - name: Inject Mock Libudev Headers for Termux Compatibility
         run: |
-          # 1. Create a dummy libudev.h inside your Termux sysroot include directory
+          # 1. Create a dummy libudev.h that also patches Android's missing pthread features
           sudo mkdir -p /data/data/com.termux/files/usr/include
           sudo tee /data/data/com.termux/files/usr/include/libudev.h > /dev/null << 'EOF'
           #ifndef MOCK_LIBUDEV_H
           #define MOCK_LIBUDEV_H
           
+          #include <pthread.h>
+
+          /* ------------------------------------------------------------- */
+          /* STUBS FOR MISSING BIONIC ANDROID PTHREAD CANCELLATION FEATURES */
+          /* ------------------------------------------------------------- */
+          #ifndef PTHREAD_CANCEL_ASYNCHRONOUS
+          #define PTHREAD_CANCEL_ASYNCHRONOUS 0
+          #endif
+          #ifndef PTHREAD_CANCEL_ENABLE
+          #define PTHREAD_CANCEL_ENABLE 1
+          #endif
+
+          // Define empty static inline stubs so they compile away safely without errors
+          static inline int pthread_setcanceltype(int type, int *oldtype) { return 0; }
+          static inline int pthread_setcancelstate(int state, int *oldstate) { return 0; }
+          static inline int pthread_cancel(pthread_t thread) { return 0; }
+          static inline void pthread_testcancel(void) {}
+          /* ------------------------------------------------------------- */
+
           struct udev;
           struct udev_device;
           struct udev_monitor;
@@ -142,7 +161,8 @@ jobs:
           #endif
            EOF
           sudo chmod 644 /data/data/com.termux/files/usr/include/libudev.h
-          echo "✔ Mock libudev.h injected into sysroot paths"
+          echo "✔ Mock libudev.h and Bionic pthread patches injected successfully"
+
 
 
       - name: Apply Turnip pthread→mtx fix (replaces 0007)
