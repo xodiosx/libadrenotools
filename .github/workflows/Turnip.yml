@@ -14,44 +14,60 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04-arm   # <-- Native ARM64 runner, no emulation
+    runs-on: ubuntu-24.04-arm   # Native ARM64 runner
     steps:
-      - name: Install host tools (proot)
+      - name: Install host tools
         run: |
           sudo apt update
-          sudo apt install -y proot wget
+          sudo apt install -y proot wget tar
 
       - name: Download and extract Termux rootfs
         run: |
+          # Downloading working Termux environment
           wget -q https://github.com/xodiosx/Wine-arm64ce/releases/download/wine-14/termux-rootfs.tar
           tar xf termux-rootfs.tar
           sudo mv data /data
           sudo chown -R $(whoami):$(whoami) /data
+          
+          # Fix Termux internal paths and environment setup
           mkdir -p /data/data/com.termux/files/usr/tmp
+          mkdir -p /data/data/com.termux/files/home
+          
+          # Crucial patch: Termux binaries use an explicit /data/data prefix internally.
+          # Create a link so /usr/bin/env inside proot can safely invoke the target bash interpreter.
+          ln -s /data/data/com.termux/files/usr/bin /data/bin
 
       - name: Write build script inside rootfs
         run: |
-          cat > /data/build.sh << 'BUILDSCRIPT'
-          #!/bin/bash
+          # Inject workflow variables directly into the script template to maintain scope inside proot
+          cat << 'EOF' > /data/data/com.termux/files/home/build.sh
+          #!/data/data/com.termux/files/usr/bin/bash
           set -e
 
-          # Update packages and install build dependencies
+          # Setup essential export variables inside environment
+          export PREFIX="/data/data/com.termux/files/usr"
+          export TMPDIR="/data/data/com.termux/files/usr/tmp"
+          export HOME="/data/data/com.termux/files/home"
+          export MESA_VERSION="${{ github.event.inputs.mesa_version }}"
+          export API_OVERRIDE="${{ github.event.inputs.api_override }}"
+
+          # System updates and required packages
           apt update
           apt upgrade -y
           apt install -y \
             git make clang binutils ninja meson pkg-config python3-mako \
             glslang flex bison curl ca-certificates \
-            libc++-dev zlib zstd
+            libc++-dev zlib zstd patch coreutils
 
           # Clone Mesa
-          git clone --depth 1 --branch ${MESA_VERSION} \
-            https://gitlab.freedesktop.org/mesa/mesa.git ~/mesa
-          cd ~/mesa
+          git clone --depth 1 --branch "${MESA_VERSION}" \
+            https://gitlab.freedesktop.org/mesa/mesa.git ${HOME}/mesa
+          cd ${HOME}/mesa
 
-          # Remove subprojects (as in the PR)
+          # Remove subprojects to prevent conflicting download calls
           rm -rf subprojects
 
-          # Helper to apply Termux patches
+          # Helper to apply Termux patches safely
           apply_termux_patch() {
             local patchfile="$1"
             echo "Applying $patchfile..."
@@ -60,18 +76,17 @@ jobs:
               patch -N -p1 || echo "Patch $patchfile already applied or skipped"
           }
 
-          # Essential patches for building on Termux
+          # Essential patches for building on Termux platforms
           apply_termux_patch "0000-disable-android-detection.patch"
           apply_termux_patch "0006-wsi-no-pthread_cancel.patch"
           apply_termux_patch "0014-replace-turnip-wait_timestamp_safe-assert.patch"
           apply_termux_patch "0015-define-reallocarray.patch"
           apply_termux_patch "0016-unofficial_support_adreno_710_720.patch"
           apply_termux_patch "0018-disable-general-layout-in-zink-for-turnip.patch"
-          apply_termux_patch "0020-enable-android-stub.patch"   # required for -Dandroid-stub
+          apply_termux_patch "0020-enable-android-stub.patch"
 
-          # Apply rename.patch from the Termux PR (makes libvulkan_freedreno_surfaceflinger.so)
-          echo "Applying rename.patch..."
-          cat > /tmp/rename.patch << 'RENAMEPATCH'
+          # Inject modification patch for SurfaceFlinger output rename
+          cat << 'RENAMEPATCH' > /data/data/com.termux/files/usr/tmp/rename.patch
           --- a/src/freedreno/vulkan/meson.build
           +++ b/src/freedreno/vulkan/meson.build
           @@ -176,7 +176,7 @@ tu_cpp_args += cpp.get_supported_arguments([
@@ -93,9 +108,10 @@ jobs:
            
            _dev_icdname = 'freedreno_devenv_icd.@0@.json'.format(host_machine.cpu())
           RENAMEPATCH
-          patch -N -p1 < /tmp/rename.patch || echo "rename.patch already applied"
+          
+          patch -N -p1 < /data/data/com.termux/files/usr/tmp/rename.patch || echo "rename.patch already applied"
 
-          # Override Vulkan API version if requested
+          # Force override Vulkan API Version if required
           if [ -n "${API_OVERRIDE}" ]; then
             DEVFILE=$(find src/freedreno/vulkan -maxdepth 1 -name 'tu_device.*' -print -quit)
             if [ -n "$DEVFILE" ]; then
@@ -104,9 +120,9 @@ jobs:
             fi
           fi
 
-          # Configure with exactly the Termux package flags
+          # Termux-compliant structural cross-build options
           meson setup build . \
-            --cmake-prefix-path $PREFIX \
+            --prefix="/data/data/com.termux/files/usr" \
             -Dplatforms=android \
             -Dplatform-sdk-version=26 \
             -Dandroid-stub=true \
@@ -127,33 +143,30 @@ jobs:
             -Dvalgrind=disabled \
             -Dvulkan-layers=
 
-          # Build
           ninja -C build
 
-          # Copy output to /tmp
-          cp build/src/freedreno/vulkan/libvulkan_freedreno_surfaceflinger.so /tmp/
-          BUILDSCRIPT
-
-          chmod +x /data/build.sh
+          # Place artifact into Termux rootfs tmp directory
+          cp build/src/freedreno/vulkan/libvulkan_freedreno_surfaceflinger.so /data/data/com.termux/files/usr/tmp/
+          EOF
+          chmod +x /data/data/com.termux/files/home/build.sh
 
       - name: Run build inside Termux rootfs via proot (native aarch64)
         run: |
+          # FIxed root target path mapping to container directory '/data' instead of host root '/'
           proot \
-            -r / \
+            -r /data \
             -b /dev -b /proc -b /sys \
             -w /data/data/com.termux/files/home \
             /data/data/com.termux/files/usr/bin/env -i \
               HOME=/data/data/com.termux/files/home \
               TERM=xterm-256color \
-              PATH=/data/data/com.termux/files/usr/bin:/usr/bin:/bin:/sbin \
-              MESA_VERSION="${{ github.event.inputs.mesa_version }}" \
-              API_OVERRIDE="${{ github.event.inputs.api_override }}" \
-              /data/data/com.termux/files/usr/bin/bash /build.sh
+              PATH=/data/data/com.termux/files/usr/bin:/bin:/usr/bin \
+              /data/data/com.termux/files/usr/bin/bash /data/data/com.termux/files/home/build.sh
 
       - name: Package artifact
         run: |
           mkdir -p turnip_out
-          cp /data/data/com.termux/files/tmp/libvulkan_freedreno_surfaceflinger.so turnip_out/
+          cp /data/data/com.termux/files/usr/tmp/libvulkan_freedreno_surfaceflinger.so turnip_out/
           VER="${{ github.event.inputs.mesa_version }}"
           ARCH="aarch64"
           tar -cJf turnip-${VER}-${ARCH}.tar.xz -C turnip_out .
