@@ -1,4 +1,4 @@
-name: Build Turnip for SurfaceFlinger (Termux proot)
+name: Build Turnip for SurfaceFlinger (ARM64 Runner + Termux proot)
 
 on:
   workflow_dispatch:
@@ -14,52 +14,44 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [aarch64]
+    runs-on: ubuntu-24.04-arm   # <-- Native ARM64 runner, no emulation
     steps:
       - name: Install host tools (proot)
         run: |
           sudo apt update
-          sudo apt install -y proot
+          sudo apt install -y proot wget
 
       - name: Download and extract Termux rootfs
         run: |
           wget -q https://github.com/xodiosx/Wine-arm64ce/releases/download/wine-14/termux-rootfs.tar
           tar xf termux-rootfs.tar
-          # Move rootfs to /data (as in your previous script)
           sudo mv data /data
           sudo chown -R $(whoami):$(whoami) /data
-          # Ensure /tmp inside rootfs exists
           mkdir -p /data/data/com.termux/files/usr/tmp
 
-      - name: Setup build environment inside rootfs
+      - name: Write build script inside rootfs
         run: |
           cat > /data/build.sh << 'BUILDSCRIPT'
           #!/bin/bash
           set -e
 
-          # Update packages
+          # Update packages and install build dependencies
           apt update
           apt upgrade -y
-
-          # Install build tools + dependencies from the PR
           apt install -y \
             git make clang binutils ninja meson pkg-config python3-mako \
             glslang flex bison curl ca-certificates \
             libc++-dev zlib zstd
 
-          # Clone Mesa (version chosen by workflow)
+          # Clone Mesa
           git clone --depth 1 --branch ${MESA_VERSION} \
             https://gitlab.freedesktop.org/mesa/mesa.git ~/mesa
           cd ~/mesa
 
-          # Remove subprojects (as per the PR)
+          # Remove subprojects (as in the PR)
           rm -rf subprojects
 
-          # Download and apply all Termux patches for mesa
-          # (this includes the hidden android-stub patch)
+          # Helper to apply Termux patches
           apply_termux_patch() {
             local patchfile="$1"
             echo "Applying $patchfile..."
@@ -68,16 +60,16 @@ jobs:
               patch -N -p1 || echo "Patch $patchfile already applied or skipped"
           }
 
-          # The essential patches for building on Termux
+          # Essential patches for building on Termux
           apply_termux_patch "0000-disable-android-detection.patch"
           apply_termux_patch "0006-wsi-no-pthread_cancel.patch"
           apply_termux_patch "0014-replace-turnip-wait_timestamp_safe-assert.patch"
           apply_termux_patch "0015-define-reallocarray.patch"
           apply_termux_patch "0016-unofficial_support_adreno_710_720.patch"
           apply_termux_patch "0018-disable-general-layout-in-zink-for-turnip.patch"
-          apply_termux_patch "0020-enable-android-stub.patch"   # <-- the key for -Dandroid-stub
+          apply_termux_patch "0020-enable-android-stub.patch"   # required for -Dandroid-stub
 
-          # Apply the rename.patch from the PR
+          # Apply rename.patch from the Termux PR (makes libvulkan_freedreno_surfaceflinger.so)
           echo "Applying rename.patch..."
           cat > /tmp/rename.patch << 'RENAMEPATCH'
           --- a/src/freedreno/vulkan/meson.build
@@ -112,7 +104,7 @@ jobs:
             fi
           fi
 
-          # Configure exactly as the Termux package does
+          # Configure with exactly the Termux package flags
           meson setup build . \
             --cmake-prefix-path $PREFIX \
             -Dplatforms=android \
@@ -138,30 +130,29 @@ jobs:
           # Build
           ninja -C build
 
-          # Copy output
+          # Copy output to /tmp
           cp build/src/freedreno/vulkan/libvulkan_freedreno_surfaceflinger.so /tmp/
           BUILDSCRIPT
 
           chmod +x /data/build.sh
 
-      - name: Run build inside Termux rootfs via proot
+      - name: Run build inside Termux rootfs via proot (native aarch64)
         run: |
           proot \
-            -r /data/data/com.termux/files/usr \
+            -r / \
             -b /dev -b /proc -b /sys \
-            -w /root \
-            /usr/bin/env -i \
-              HOME=/root \
+            -w /data/data/com.termux/files/home \
+            /data/data/com.termux/files/usr/bin/env -i \
+              HOME=/data/data/com.termux/files/home \
               TERM=xterm-256color \
-              PATH=/usr/bin:/usr/sbin:/bin:/sbin \
+              PATH=/data/data/com.termux/files/usr/bin:/usr/bin:/bin:/sbin \
               MESA_VERSION="${{ github.event.inputs.mesa_version }}" \
               API_OVERRIDE="${{ github.event.inputs.api_override }}" \
-              /bin/bash /build.sh
+              /data/data/com.termux/files/usr/bin/bash /build.sh
 
       - name: Package artifact
         run: |
           mkdir -p turnip_out
-          # The build script placed the .so in /tmp inside the rootfs
           cp /data/data/com.termux/files/tmp/libvulkan_freedreno_surfaceflinger.so turnip_out/
           VER="${{ github.event.inputs.mesa_version }}"
           ARCH="aarch64"
