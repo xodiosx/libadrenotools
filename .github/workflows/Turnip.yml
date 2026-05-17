@@ -130,7 +130,17 @@ jobs:
             -Dxmlconfig=disabled \
             -Dvalgrind=disabled \
             -Dzstd=disabled \
-            -Dandroid-libbacktrace=disabled
+            -Dandroid-libbacktrace=disabled \
+            -Dlibarchive:crypto=disabled \
+            -Dlibarchive:openssl=disabled \
+            -Dlibarchive:iconv=disabled \
+            -Dlibarchive:bzip2=disabled \
+            -Dlibarchive:lz4=disabled \
+            -Dlibarchive:lzo=disabled \
+            -Dlibarchive:zstd=disabled \
+            -Dlibarchive:xz=disabled \
+            -Dlibarchive:zlib=disabled
+
 
       - name: Build Turnip
         run: ninja -C build
