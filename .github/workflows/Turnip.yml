@@ -109,7 +109,7 @@ jobs:
           cpp = '${NDK_BIN}/${TARGET}${API}-clang++'
           ar = '${NDK_BIN}/llvm-ar'
           strip = '${NDK_BIN}/llvm-strip'
-          pkg-config = 'false'
+          pkgconfig = 'false'
 
           [properties]
           sys_root = '${NDK_SYSROOT}'
@@ -140,8 +140,8 @@ jobs:
             -Dfreedreno-kmds=msm,kgsl \
             -Dxmlconfig=disabled \
             -Dvalgrind=disabled \
-            -Dvulkan-layers= 
-            
+            -Dvulkan-layers= \
+            -Dfreedreno-virtio=false
 
       - name: Build Turnip
         run: ninja -C build
