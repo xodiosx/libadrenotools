@@ -116,6 +116,34 @@ jobs:
           #apply_termux_patch "0019-UBWC_5-and-UBWC_6-support.patch"
           #apply_termux_patch "0020-unofficial-support-adreno-830.patch"
           #apply_termux_patch "0021-unofficial-support-adreno-810-825-829.patch"
+       
+      - name: Inject Mock Libudev Headers for Termux Compatibility
+        run: |
+          # 1. Create a dummy libudev.h inside your Termux sysroot include directory
+          sudo mkdir -p /data/data/com.termux/files/usr/include
+          sudo tee /data/data/com.termux/files/usr/include/libudev.h > /dev/null << 'EOF'
+          #ifndef MOCK_LIBUDEV_H
+          #define MOCK_LIBUDEV_H
+          
+          struct udev;
+          struct udev_device;
+          struct udev_monitor;
+          struct udev_enumerate;
+          
+          static inline struct udev *udev_new(void) { return 0; }
+          static inline struct udev *udev_ref(struct udev *u) { return u; }
+          static inline void udev_unref(struct udev *u) {}
+          static inline struct udev_device *udev_device_new_from_syspath(struct udev *u, const char *p) { return 0; }
+          static inline struct udev_device *udev_device_ref(struct udev_device *d) { return d; }
+          static inline void udev_device_unref(struct udev_device *d) {}
+          static inline const char *udev_device_get_devnode(struct udev_device *d) { return 0; }
+          static inline const char *udev_device_get_property_value(struct udev_device *d, const char *p) { return 0; }
+          
+          #endif
+           EOF
+          sudo chmod 644 /data/data/com.termux/files/usr/include/libudev.h
+          echo "✔ Mock libudev.h injected into sysroot paths"
+
 
       - name: Apply Turnip pthread→mtx fix (replaces 0007)
         run: |
