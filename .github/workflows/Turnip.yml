@@ -26,14 +26,26 @@ jobs:
           pip install --user meson==1.4.0
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Download and setup Android NDK (r27c)
+            - name: Download and setup Android NDK (r27c)
         run: |
           NDK_VERSION="r27c"
           NDK_ZIP="android-ndk-${NDK_VERSION}-linux.zip"
-          wget -q "https://google.com{NDK_ZIP}"
-          unzip -q ${NDK_ZIP} -d /opt
+          
+          echo "Downloading Android NDK safely with retry hooks..."
+          # Using curl with native automatic error recovery flags
+          curl -L --retry 5 --retry-delay 5 --connect-timeout 30 \
+            -o "${NDK_ZIP}" \
+            "https://google.com{NDK_ZIP}"
+            
+          echo "Extracting NDK binaries..."
+          unzip -q "${NDK_ZIP}" -d /opt
+          
           echo "ANDROID_NDK_HOME=/opt/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
           chmod +x /opt/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/*
+          
+          # Clean up zip file immediately to free up runner disk space
+          rm "${NDK_ZIP}"
+
 
       - name: Clone Mesa
         run: |
