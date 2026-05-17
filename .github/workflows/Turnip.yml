@@ -1,50 +1,27 @@
-name: Build Turnip for SurfaceFlinger (ARM64 Runner + Termux proot)
-
-on:
-  workflow_dispatch:
-    inputs:
-      mesa_version:
-        description: 'Mesa version (e.g., mesa-26.0.1)'
-        required: true
-        default: 'main'
-      api_override:
-        description: 'Vulkan API override version (e.g., 1.4.301)'
-        required: false
-        default: '1.4.301'
-
-jobs:
-  build:
-    runs-on: ubuntu-24.04-arm   # Native ARM64 runner
-    steps:
-      - name: Install host tools
-        run: |
-          sudo apt update
-          sudo apt install -y proot wget tar
-
       - name: Download and extract Termux rootfs
         run: |
-          # Downloading working Termux environment
-          wget -q https://github.com/xodiosx/Wine-arm64ce/releases/download/wine-14/termux-rootfs.tar
-          tar xf termux-rootfs.tar
-          sudo mv data /data
-          sudo chown -R $(whoami):$(whoami) /data
+          # 1. Download the archive
+          wget -q https://github.com
           
-          # Fix Termux internal paths and environment setup
-          mkdir -p /data/data/com.termux/files/usr/tmp
-          mkdir -p /data/data/com.termux/files/home
+          # 2. Extract into the host's actual root /data path
+          # We use sudo because /data requires root execution context on standard Ubuntu images
+          sudo tar -xf termux-rootfs.tar -C /
           
-          # Crucial patch: Termux binaries use an explicit /data/data prefix internally.
-          # Create a link so /usr/bin/env inside proot can safely invoke the target bash interpreter.
-          ln -s /data/data/com.termux/files/usr/bin /data/bin
+          # 3. Create critical missing system directories
+          sudo mkdir -p /data/data/com.termux/files/usr/tmp
+          sudo mkdir -p /data/data/com.termux/files/home
+          
+          # 4. Correct permissions to allow user context configuration inside the pipeline
+          sudo chown -R $(whoami):$(whoami) /data/data/com.termux
 
       - name: Write build script inside rootfs
         run: |
-          # Inject workflow variables directly into the script template to maintain scope inside proot
+          # Write the script directly to the absolute internal path
           cat << 'EOF' > /data/data/com.termux/files/home/build.sh
           #!/data/data/com.termux/files/usr/bin/bash
           set -e
 
-          # Setup essential export variables inside environment
+          # Force standard Termux cross-compiler paths
           export PREFIX="/data/data/com.termux/files/usr"
           export TMPDIR="/data/data/com.termux/files/usr/tmp"
           export HOME="/data/data/com.termux/files/home"
@@ -61,10 +38,8 @@ jobs:
 
           # Clone Mesa
           git clone --depth 1 --branch "${MESA_VERSION}" \
-            https://gitlab.freedesktop.org/mesa/mesa.git ${HOME}/mesa
+            https://freedesktop.org ${HOME}/mesa
           cd ${HOME}/mesa
-
-          # Remove subprojects to prevent conflicting download calls
           rm -rf subprojects
 
           # Helper to apply Termux patches safely
@@ -72,7 +47,7 @@ jobs:
             local patchfile="$1"
             echo "Applying $patchfile..."
             curl -sSfL \
-              "https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/$patchfile" | \
+              "https://githubusercontent.com" | \
               patch -N -p1 || echo "Patch $patchfile already applied or skipped"
           }
 
@@ -120,7 +95,7 @@ jobs:
             fi
           fi
 
-          # Termux-compliant structural cross-build options
+          # Termux architecture-compliant options
           meson setup build . \
             --prefix="/data/data/com.termux/files/usr" \
             -Dplatforms=android \
@@ -145,35 +120,21 @@ jobs:
 
           ninja -C build
 
-          # Place artifact into Termux rootfs tmp directory
+          # Copy target engine to runtime folder
           cp build/src/freedreno/vulkan/libvulkan_freedreno_surfaceflinger.so /data/data/com.termux/files/usr/tmp/
           EOF
           chmod +x /data/data/com.termux/files/home/build.sh
 
       - name: Run build inside Termux rootfs via proot (native aarch64)
         run: |
-          # FIxed root target path mapping to container directory '/data' instead of host root '/'
+          # Use -r / so the environment matches the binary system hardcoding.
+          # Bind /data explicitly so the proot layer sandboxes host storage execution.
           proot \
-            -r /data \
-            -b /dev -b /proc -b /sys \
+            -r / \
+            -b /dev -b /proc -b /sys -b /data \
             -w /data/data/com.termux/files/home \
             /data/data/com.termux/files/usr/bin/env -i \
               HOME=/data/data/com.termux/files/home \
               TERM=xterm-256color \
               PATH=/data/data/com.termux/files/usr/bin:/bin:/usr/bin \
               /data/data/com.termux/files/usr/bin/bash /data/data/com.termux/files/home/build.sh
-
-      - name: Package artifact
-        run: |
-          mkdir -p turnip_out
-          cp /data/data/com.termux/files/usr/tmp/libvulkan_freedreno_surfaceflinger.so turnip_out/
-          VER="${{ github.event.inputs.mesa_version }}"
-          ARCH="aarch64"
-          tar -cJf turnip-${VER}-${ARCH}.tar.xz -C turnip_out .
-          echo "artifact_name=turnip-${VER}-${ARCH}.tar.xz" >> $GITHUB_ENV
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: turnip-${{ github.event.inputs.mesa_version }}-aarch64
-          path: turnip-*.tar.xz
