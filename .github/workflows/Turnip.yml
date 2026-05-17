@@ -1,34 +1,57 @@
+name: Build Turnip for SurfaceFlinger (ARM64 Runner + Termux proot)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mesa_version:
+        description: 'Mesa version (e.g., mesa-26.0.1)'
+        required: true
+        default: 'main'
+      api_override:
+        description: 'Vulkan API override version (e.g., 1.4.301)'
+        required: false
+        default: '1.4.301'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm   # Native ARM64 runner, no emulation
+    steps:
+      - name: Install host tools (proot)
+        run: |
+          sudo apt update
+          sudo apt install -y proot wget tar
+
       - name: Download and extract Termux rootfs
         run: |
           # 1. Download the archive
           wget -q https://github.com
           
-          # 2. Extract into the host's actual root /data path
-          # We use sudo because /data requires root execution context on standard Ubuntu images
+          # 2. Extract into the host's actual root /data directory
+          # We use sudo because /data is a system path on standard Ubuntu runner images
           sudo tar -xf termux-rootfs.tar -C /
           
-          # 3. Create critical missing system directories
+          # 3. Create critical missing internal directories
           sudo mkdir -p /data/data/com.termux/files/usr/tmp
           sudo mkdir -p /data/data/com.termux/files/home
           
-          # 4. Correct permissions to allow user context configuration inside the pipeline
+          # 4. Correct permissions to allow workflow user access inside the jail environment
           sudo chown -R $(whoami):$(whoami) /data/data/com.termux
 
       - name: Write build script inside rootfs
         run: |
-          # Write the script directly to the absolute internal path
+          # Inject workflow variables directly into the script template to maintain scope inside proot
           cat << 'EOF' > /data/data/com.termux/files/home/build.sh
           #!/data/data/com.termux/files/usr/bin/bash
           set -e
 
-          # Force standard Termux cross-compiler paths
+          # Force standard Termux environment variable definitions
           export PREFIX="/data/data/com.termux/files/usr"
           export TMPDIR="/data/data/com.termux/files/usr/tmp"
           export HOME="/data/data/com.termux/files/home"
           export MESA_VERSION="${{ github.event.inputs.mesa_version }}"
           export API_OVERRIDE="${{ github.event.inputs.api_override }}"
 
-          # System updates and required packages
+          # System updates and required packages inside Termux
           apt update
           apt upgrade -y
           apt install -y \
@@ -40,6 +63,8 @@
           git clone --depth 1 --branch "${MESA_VERSION}" \
             https://freedesktop.org ${HOME}/mesa
           cd ${HOME}/mesa
+
+          # Remove subprojects to prevent conflicting download calls during config
           rm -rf subprojects
 
           # Helper to apply Termux patches safely
@@ -128,7 +153,7 @@
       - name: Run build inside Termux rootfs via proot (native aarch64)
         run: |
           # Use -r / so the environment matches the binary system hardcoding.
-          # Bind /data explicitly so the proot layer sandboxes host storage execution.
+          # Bind /data explicitly so the proot layer sandboxes host storage execution cleanly.
           proot \
             -r / \
             -b /dev -b /proc -b /sys -b /data \
@@ -138,3 +163,18 @@
               TERM=xterm-256color \
               PATH=/data/data/com.termux/files/usr/bin:/bin:/usr/bin \
               /data/data/com.termux/files/usr/bin/bash /data/data/com.termux/files/home/build.sh
+
+      - name: Package artifact
+        run: |
+          mkdir -p turnip_out
+          cp /data/data/com.termux/files/usr/tmp/libvulkan_freedreno_surfaceflinger.so turnip_out/
+          VER="${{ github.event.inputs.mesa_version }}"
+          ARCH="aarch64"
+          tar -cJf turnip-${VER}-${ARCH}.tar.xz -C turnip_out .
+          echo "artifact_name=turnip-${VER}-${ARCH}.tar.xz" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: turnip-${{ github.event.inputs.mesa_version }}-aarch64
+          path: turnip-*.tar.xz
