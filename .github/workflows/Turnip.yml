@@ -24,7 +24,7 @@ jobs:
       - name: Download and extract Termux rootfs
         run: |
           # 1. Download the archive
-          wget -q https://github.com
+          wget -q https://github.com/xodiosx/Wine-arm64ce/releases/download/wine-14/termux-rootfs.tar
           
           # 2. Extract into the host's actual root /data directory
           # We use sudo because /data is a system path on standard Ubuntu runner images
@@ -61,7 +61,7 @@ jobs:
 
           # Clone Mesa
           git clone --depth 1 --branch "${MESA_VERSION}" \
-            https://freedesktop.org ${HOME}/mesa
+            https://gitlab.freedesktop.org/mesa/mesa.git ${HOME}/mesa
           cd ${HOME}/mesa
 
           # Remove subprojects to prevent conflicting download calls during config
@@ -72,7 +72,7 @@ jobs:
             local patchfile="$1"
             echo "Applying $patchfile..."
             curl -sSfL \
-              "https://githubusercontent.com" | \
+              "https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/$patchfile" | \
               patch -N -p1 || echo "Patch $patchfile already applied or skipped"
           }
 
