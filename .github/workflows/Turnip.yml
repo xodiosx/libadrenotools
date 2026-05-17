@@ -1,4 +1,4 @@
-name: Build Turnip for Android (SurfaceFlinger + AHB, Vulkan 1.4)
+name: Build Turnip for SurfaceFlinger (Android platform)
 
 on:
   workflow_dispatch:
@@ -17,12 +17,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [aarch64]      # Hardcoded pure 64-bit focus
+        arch: [aarch64]
     steps:
-      - name: Install host tools (meson 1.4.0)
+      - name: Install host build tools
         run: |
           sudo apt update
-          sudo apt install -y ninja-build python3-mako glslang-tools flex bison curl
+          sudo apt install -y ninja-build python3-mako python3-pip \
+            glslang-tools flex bison curl ca-certificates
           pip install --user meson==1.4.0
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
@@ -30,119 +31,117 @@ jobs:
         run: |
           NDK_VERSION="r27c"
           NDK_ZIP="android-ndk-${NDK_VERSION}-linux.zip"
-          
-          echo "Downloading Android NDK safely with retry hooks..."
-          # Using curl with native automatic error recovery flags
-          curl -L --retry 5 --retry-delay 5 --connect-timeout 30 \
-            -o "${NDK_ZIP}" \
-            "https://google.com{NDK_ZIP}"
-            
-          echo "Extracting NDK binaries..."
-          unzip -q "${NDK_ZIP}" -d /opt
-          
+          wget -q "https://dl.google.com/android/repository/${NDK_ZIP}"
+          unzip -q ${NDK_ZIP} -d /opt
           echo "ANDROID_NDK_HOME=/opt/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
           chmod +x /opt/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/*
-          
-          # Clean up zip file immediately to free up runner disk space
-          rm "${NDK_ZIP}"
-
 
       - name: Clone Mesa
         run: |
           git clone --depth 1 --branch ${{ github.event.inputs.mesa_version }} \
-            https://freedesktop.org ~/mesa
+            https://gitlab.freedesktop.org/mesa/mesa.git ~/mesa
 
-      # -------------------- Patches (Ported from Gist logic) --------------------
-      - name: Apply necessary patches
+      - name: Apply Termux Bionic patches
         run: |
           cd ~/mesa
-          # Disable traditional desktop-Linux runtime asset probing logic
-          curl -sSfL "https://githubusercontent.com" | patch -N -p1
+          # Disable libudev detection
+          sed -i "s/dependency('libudev',/dependency('libudev', required : false, disabler : true, /g" meson.build
+          sed -i "s/has_header('libudev.h')/false/g" meson.build
+          
+          apply_termux_patch() {
+            local patchfile="$1"
+            echo "Applying $patchfile..."
+            curl -sSfL "https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/$patchfile" | patch -N -p1
+          }
 
-          # pthread_mutex -> mtx_ translation layer
+          apply_termux_patch "0000-disable-android-detection.patch"
+          apply_termux_patch "0014-replace-turnip-wait_timestamp_safe-assert.patch"
+          apply_termux_patch "0016-unofficial_support_adreno_710_720.patch"
+          apply_termux_patch "0018-disable-general-layout-in-zink-for-turnip.patch"
+          apply_termux_patch "0006-wsi-no-pthread_cancel.patch"
+          apply_termux_patch "0015-define-reallocarray.patch"
+
+      - name: Apply Turnip pthread→mtx fix (replaces 0007)
+        run: |
+          cd ~/mesa
           sed -i 's/pthread_mutex_lock(&dev->pipeline_mutex)/mtx_lock(\&dev->pipeline_mutex)/g' src/freedreno/vulkan/tu_shader.cc
           sed -i 's/pthread_mutex_unlock(&dev->pipeline_mutex)/mtx_unlock(\&dev->pipeline_mutex)/g' src/freedreno/vulkan/tu_shader.cc
+          echo "✔ tu_shader.cc: pthread_mutex → mtx_"
 
-          # Inject Qualcomm Adreno 7xx architecture mappings
-          curl -sSfL "https://githubusercontent.com" | patch -N -p1
-
-      # -------------------- API Version Override --------------------
       - name: Override Vulkan API version
         if: github.event.inputs.api_override != ''
         run: |
           cd ~/mesa
           VER="${{ github.event.inputs.api_override }}"
-          
-          DEVFILE=$(find src/freedreno/vulkan -name 'tu_device.cc' -o -name 'tu_device.c' -print -quit)
+          DEVFILE=$(find src/freedreno/vulkan -maxdepth 1 -name 'tu_device.*' -print -quit)
           if [ -z "$DEVFILE" ]; then
-            echo "❌ Could not find tu_device compilation targets"
+            echo "❌ Could not find tu_device file"
             exit 1
           fi
-          
-          MAJOR=$(echo "$VER" | cut -d. -f1)
-          MINOR=$(echo "$VER" | cut -d. -f2)
-          PATCH=$(echo "$VER" | cut -d. -f3)
-          echo "Forcing compilation profile targeting Vulkan ${MAJOR}.${MINOR}.${PATCH} inside $DEVFILE"
-          
-          # Match against modern macro layouts
-          if grep -q "TU_API_VERSION" "$DEVFILE"; then
-            sed -i "s/#define TU_API_VERSION .*/#define TU_API_VERSION VK_MAKE_VERSION($MAJOR, $MINOR, $PATCH)/g" "$DEVFILE"
-          else
-            sed -i -E "s/(api[_ ]?[Vv]ersion\s*=\s*).*;/\1VK_MAKE_API_VERSION(${MAJOR}, ${MINOR}, ${PATCH});/" "$DEVFILE"
-          fi
+          echo "Forcing Vulkan API version to $VER in $DEVFILE"
+          sed -i "0,/VK_API_VERSION_[0-9_]*/s//VK_API_VERSION_${VER//\./_}/" "$DEVFILE"
 
-      # -------------------- Cross file (Pure Android Layout) --------------------
       - name: Create Meson cross file for ${{ matrix.arch }}
         run: |
-          CPU_FAMILY="aarch64"
-          CPU="aarch64"
-          TARGET="aarch64-linux-android"
-          API_LEVEL=28 # Android Pie fallback baseline
-          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+            CPU_FAMILY="aarch64"
+            CPU="aarch64"
+            TARGET="aarch64-linux-android"
+          else
+            CPU_FAMILY="arm"
+            CPU="armv7l"
+            TARGET="armv7a-linux-androideabi"
+          fi
+          API=28
+          NDK="$ANDROID_NDK_HOME"
+          NDK_BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          NDK_SYSROOT="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
 
-          > ~/cross_file.txt
-          echo "[host_machine]" >> ~/cross_file.txt
-          echo "system = 'android'" >> ~/cross_file.txt
-          echo "cpu_family = '${CPU_FAMILY}'" >> ~/cross_file.txt
-          echo "cpu = '${CPU}'" >> ~/cross_file.txt
-          echo "endian = 'little'" >> ~/cross_file.txt
-          echo "" >> ~/cross_file.txt
-          echo "[binaries]" >> ~/cross_file.txt
-          echo "c = '${NDK_BIN}/${TARGET}${API_LEVEL}-clang'" >> ~/cross_file.txt
-          echo "cpp = '${NDK_BIN}/${TARGET}${API_LEVEL}-clang++'" >> ~/cross_file.txt
-          echo "ar = '${NDK_BIN}/llvm-ar'" >> ~/cross_file.txt
-          echo "strip = '${NDK_BIN}/llvm-strip'" >> ~/cross_file.txt
-          echo "pkg-config = 'pkg-config'" >> ~/cross_file.txt
+          cat > ~/cross_file.txt << EOF
+          [host_machine]
+          system = 'android'
+          cpu_family = '${CPU_FAMILY}'
+          cpu = '${CPU}'
+          endian = 'little'
 
-      # -------------------- Configure (Ported Gist Flags) --------------------
-      - name: Configure Mesa build for Turnip
+          [binaries]
+          c = '${NDK_BIN}/${TARGET}${API}-clang'
+          cpp = '${NDK_BIN}/${TARGET}${API}-clang++'
+          ar = '${NDK_BIN}/llvm-ar'
+          strip = '${NDK_BIN}/llvm-strip'
+          pkg-config = 'false'
+
+          [properties]
+          sys_root = '${NDK_SYSROOT}'
+
+          [built-in options]
+          c_args = ['-D__ANDROID__', '-DANDROID', '-UHAVE_LIBUDEV', '-U_HAVE_LIBUDEV']
+          cpp_args = ['-D__ANDROID__', '-DANDROID', '-UHAVE_LIBUDEV', '-U_HAVE_LIBUDEV']
+          EOF
+
+      - name: Configure Mesa build for Turnip (SurfaceFlinger)
         run: |
           meson setup build ~/mesa \
             --cross-file ~/cross_file.txt \
             -Dvulkan-drivers=freedreno \
             -Dgallium-drivers= \
             -Dplatforms=android \
-            -Dandroid-stub=true \
+            -Dandroid-libbacktrace=disabled \
             -Dllvm=disabled \
             -Dbuildtype=release \
             -Dprefix=/usr \
             -Dstrip=true \
-            -Degl=disabled \
+            -Dglx=disabled \
             -Dgbm=disabled \
             -Dopengl=false \
+            -Degl=disabled \
             -Dgles1=disabled \
             -Dgles2=disabled \
-            -Dglx=disabled \
-            -Dshared-glapi=disabled \
-            -Dshader-cache=disabled \
-            -Dfreedreno-kmds=kgsl \
+            -Dfreedreno-kmds=msm,kgsl \
             -Dxmlconfig=disabled \
             -Dvalgrind=disabled \
-            -Dzstd=disabled \
-            -Dandroid-libbacktrace=disabled \
-            -Dlibarchive:crypto=disabled \
-            -Dlibarchive:openssl=disabled \
-            -Dlibarchive:iconv=disabled
+            -Dvulkan-layers= \
+            -Dfreedreno-virtio=false
 
       - name: Build Turnip
         run: ninja -C build
@@ -151,12 +150,16 @@ jobs:
         run: |
           mkdir -p turnip_out
           cp build/src/freedreno/vulkan/libvulkan_freedreno.so turnip_out/
-          TARNAME=turnip-surfaceflinger-${{ github.event.inputs.mesa_version }}-aarch64.tar.xz
+          if [ "${{ matrix.arch }}" = "arm" ]; then
+            TARNAME=turnip-${{ github.event.inputs.mesa_version }}-arm.tar.xz
+          else
+            TARNAME=turnip-${{ github.event.inputs.mesa_version }}-aarch64.tar.xz
+          fi
           tar -cJf $TARNAME -C turnip_out .
-          echo "TAR_NAME=$TARNAME" >> $GITHUB_ENV
+          echo "artifact_name=$TARNAME" >> $GITHUB_ENV
 
-      - name: Upload artifact
+      - name: Upload ${{ matrix.arch }} artifact
         uses: actions/upload-artifact@v4
         with:
-          name: turnip-surfaceflinger-${{ github.event.inputs.mesa_version }}-${{ matrix.arch }}
-          path: turnip-surfaceflinger-*.tar.xz
+          name: turnip-${{ github.event.inputs.mesa_version }}-${{ matrix.arch }}
+          path: turnip-${{ github.event.inputs.mesa_version }}-*.tar.xz
