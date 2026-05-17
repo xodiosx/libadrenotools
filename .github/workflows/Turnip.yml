@@ -159,6 +159,9 @@ jobs:
           echo "" >> ~/cross_file.txt
           echo "[properties]" >> ~/cross_file.txt
           echo "" >> ~/cross_file.txt
+          echo "[built-in options]" >> ~/cross_file.txt
+          echo "c_args = ['-D__TERMUX__']" >> ~/cross_file.txt
+          echo "cpp_args = ['-D__TERMUX__']" >> ~/cross_file.txt
           # No built-in options – the wrapper handles the include path
 
       - name: Configure Mesa build for Turnip
