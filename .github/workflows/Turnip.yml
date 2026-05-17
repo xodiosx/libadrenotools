@@ -88,6 +88,9 @@ jobs:
       # -------------------- Cross file (Android + aarch64) --------------------
       - name: Create Meson cross file
         run: |
+          mkdir -p ~/stub_includes
+          touch ~/stub_includes/xf86drm.h
+
           API_LEVEL=28
           NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
@@ -104,6 +107,10 @@ jobs:
           echo "ar = '${NDK_BIN}/llvm-ar'" >> ~/cross_file.txt
           echo "strip = '${NDK_BIN}/llvm-strip'" >> ~/cross_file.txt
           echo "pkgconfig = 'pkg-config'" >> ~/cross_file.txt
+          echo "[built-in options]" >> ~/cross_file.txt
+          echo "c_args = ['-isystem', '${HOME}/stub_includes']" >> ~/cross_file.txt
+          echo "cpp_args = ['-isystem', '${HOME}/stub_includes']" >> ~/cross_file.txt
+
 
       # -------------------- Configure (Android + Turnip only) --------------------
       - name: Configure Mesa build for Turnip
