@@ -1,4 +1,4 @@
-name: Build Turnip for Android (SurfaceFlinger + AHB, Vulkan 1.4)
+name: Build Turnip for Android (SurfaceFlinger + AHB, aarch64)
 
 on:
   workflow_dispatch:
@@ -15,9 +15,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [aarch64, arm]      # builds for both 64‑bit and 32‑bit ARM
     steps:
       - name: Install host tools (meson 1.4.0)
         run: |
@@ -35,23 +32,40 @@ jobs:
           echo "ANDROID_NDK_HOME=/opt/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
           chmod +x /opt/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/*
 
+      # ---------- Dummy libdrm for pkg-config ----------
+      - name: Create dummy libdrm.pc
+        run: |
+          sudo mkdir -p /usr/local/lib/pkgconfig
+          sudo tee /usr/local/lib/pkgconfig/libdrm.pc > /dev/null << 'EOF'
+          prefix=/usr/local
+          libdir=${prefix}/lib
+          includedir=${prefix}/include
+
+          Name: libdrm
+          Description: Userspace interface to kernel DRM services (stub)
+          Version: 2.4.131
+          Libs: -L${libdir} -ldrm
+          Cflags: -I${includedir}
+          EOF
+          echo "✔ Dummy libdrm.pc created"
+
       - name: Clone Mesa
         run: |
           git clone --depth 1 --branch ${{ github.event.inputs.mesa_version }} \
             https://gitlab.freedesktop.org/mesa/mesa.git ~/mesa
 
-      # -------------------- Patches (only what's needed for Turnip + Android) --------------------
+      # -------------------- Patches (Turnip + Android) --------------------
       - name: Apply necessary patches
         run: |
           cd ~/mesa
-          # Disable the build-time Android detection so we can cross‑compile with the NDK
+          # Disable build-time Android detection
           curl -sSfL "https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/0000-disable-android-detection.patch" | patch -N -p1
 
-          # pthread_mutex -> mtx_ fix (required for Termux/Bionic compatibility)
+          # pthread_mutex -> mtx_ fix (Bionic compatibility)
           sed -i 's/pthread_mutex_lock(&dev->pipeline_mutex)/mtx_lock(\&dev->pipeline_mutex)/g' src/freedreno/vulkan/tu_shader.cc
           sed -i 's/pthread_mutex_unlock(&dev->pipeline_mutex)/mtx_unlock(\&dev->pipeline_mutex)/g' src/freedreno/vulkan/tu_shader.cc
 
-          # Optional: unofficial Adreno 710/720 support
+          # Optional: Adreno 710/720 support
           curl -sSfL "https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/0016-unofficial_support_adreno_710_720.patch" | patch -N -p1
 
       # -------------------- API Version Override (fixed) --------------------
@@ -71,34 +85,25 @@ jobs:
           echo "Forcing API version to ${MAJOR}.${MINOR}.${PATCH} in $DEVFILE"
           sed -i -E "s/(api[_ ]?[Vv]ersion\s*=\s*).*;/\1VK_MAKE_API_VERSION(${MAJOR}, ${MINOR}, ${PATCH});/" "$DEVFILE"
 
-      # -------------------- Cross file (NDK + Android) --------------------
-      - name: Create Meson cross file for ${{ matrix.arch }}
+      # -------------------- Cross file (Android + aarch64) --------------------
+      - name: Create Meson cross file
         run: |
-          if [ "${{ matrix.arch }}" = "aarch64" ]; then
-            CPU_FAMILY="aarch64"
-            CPU="aarch64"
-            TARGET="aarch64-linux-android"
-          else
-            CPU_FAMILY="arm"
-            CPU="armv7l"
-            TARGET="armv7a-linux-androideabi"
-          fi
           API_LEVEL=28
           NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
           > ~/cross_file.txt
           echo "[host_machine]" >> ~/cross_file.txt
-          echo "system = 'android'" >> ~/cross_file.txt        # ← Android, not linux
-          echo "cpu_family = '${CPU_FAMILY}'" >> ~/cross_file.txt
-          echo "cpu = '${CPU}'" >> ~/cross_file.txt
+          echo "system = 'android'" >> ~/cross_file.txt
+          echo "cpu_family = 'aarch64'" >> ~/cross_file.txt
+          echo "cpu = 'aarch64'" >> ~/cross_file.txt
           echo "endian = 'little'" >> ~/cross_file.txt
           echo "" >> ~/cross_file.txt
           echo "[binaries]" >> ~/cross_file.txt
-          echo "c = '${NDK_BIN}/${TARGET}${API_LEVEL}-clang'" >> ~/cross_file.txt
-          echo "cpp = '${NDK_BIN}/${TARGET}${API_LEVEL}-clang++'" >> ~/cross_file.txt
+          echo "c = '${NDK_BIN}/aarch64-linux-android${API_LEVEL}-clang'" >> ~/cross_file.txt
+          echo "cpp = '${NDK_BIN}/aarch64-linux-android${API_LEVEL}-clang++'" >> ~/cross_file.txt
           echo "ar = '${NDK_BIN}/llvm-ar'" >> ~/cross_file.txt
           echo "strip = '${NDK_BIN}/llvm-strip'" >> ~/cross_file.txt
-          echo "pkgconfig = 'pkg-config'" >> ~/cross_file.txt   # standard pkg-config, no wrapper needed
+          echo "pkgconfig = 'pkg-config'" >> ~/cross_file.txt
 
       # -------------------- Configure (Android + Turnip only) --------------------
       - name: Configure Mesa build for Turnip
@@ -130,20 +135,16 @@ jobs:
       - name: Build Turnip
         run: ninja -C build
 
-      - name: Package artifact for ${{ matrix.arch }}
+      - name: Package artifact
         run: |
           mkdir -p turnip_out
           cp build/src/freedreno/vulkan/libvulkan_freedreno.so turnip_out/
-          if [ "${{ matrix.arch }}" = "arm" ]; then
-            TARNAME=turnip-android-${{ github.event.inputs.mesa_version }}-arm.tar.xz
-          else
-            TARNAME=turnip-android-${{ github.event.inputs.mesa_version }}-aarch64.tar.xz
-          fi
+          TARNAME=turnip-android-${{ github.event.inputs.mesa_version }}-aarch64.tar.xz
           tar -cJf $TARNAME -C turnip_out .
           echo "artifact_name=$TARNAME" >> $GITHUB_ENV
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: turnip-android-${{ github.event.inputs.mesa_version }}-${{ matrix.arch }}
+          name: turnip-android-${{ github.event.inputs.mesa_version }}-aarch64
           path: turnip-android-${{ github.event.inputs.mesa_version }}-*.tar.xz
