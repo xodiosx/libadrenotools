@@ -1,4 +1,4 @@
-name: Build Turnip for Termux (Bionic + Vulkan 1.4)
+name: Build Turnip adreno
 
 on:
   workflow_dispatch:
