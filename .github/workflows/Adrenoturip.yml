@@ -197,7 +197,7 @@ jobs:
             CPU="armv7l"
             TARGET="armv7a-linux-androideabi"
           fi
-          API=28
+          API=29
           NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
           > ~/cross_file.txt
