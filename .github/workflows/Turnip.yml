@@ -1,10 +1,10 @@
-name: Build Turnip for SurfaceFlinger (ARM64 Runner + Termux proot)
+name: Build Turnip for Termux (Bionic + Vulkan 1.4)
 
 on:
   workflow_dispatch:
     inputs:
       mesa_version:
-        description: 'Mesa version (e.g., mesa-26.0.1)'
+        description: 'Mesa version (e.g., mesa-26.0.6)'
         required: true
         default: 'main'
       api_override:
@@ -14,167 +14,252 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04-arm   # Native ARM64 runner, no emulation
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [aarch64]
     steps:
-      - name: Install host tools (proot)
+      - name: Install host build tools (pip meson 1.4.0)
         run: |
           sudo apt update
-          sudo apt install -y proot wget tar
+          sudo apt install -y ninja-build pkg-config python3-mako python3-pip \
+            glslang-tools flex bison curl ca-certificates
+          pip install --user meson==1.4.0
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Download and extract Termux rootfs
+      - name: Download and setup Android NDK (manual)
         run: |
-          # 1. Download the archive
+          NDK_VERSION="r27c"
+          NDK_ZIP="android-ndk-${NDK_VERSION}-linux.zip"
+          wget -q "https://dl.google.com/android/repository/${NDK_ZIP}"
+          unzip -q ${NDK_ZIP} -d /opt
+          echo "ANDROID_NDK_HOME=/opt/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
+          chmod +x /opt/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/*
+
+      - name: Setup Termux sysroot (same as Wine build)
+        run: |
+          mkdir termux && cd termux
           wget -q https://github.com/xodiosx/Wine-arm64ce/releases/download/wine-14/termux-rootfs.tar
-          
-          # 2. Extract into the host's actual root /data directory
-          # We use sudo because /data is a system path on standard Ubuntu runner images
-          sudo tar -xf termux-rootfs.tar -C /
-          
-          # 3. Create critical missing internal directories
-          sudo mkdir -p /data/data/com.termux/files/usr/tmp
-          sudo mkdir -p /data/data/com.termux/files/home
-          
-          # 4. Correct permissions to allow workflow user access inside the jail environment
-          sudo chown -R $(whoami):$(whoami) /data/data/com.termux
+          tar xf termux-rootfs.tar
+          sudo mv data /data
+          sudo chown -R $(whoami):$(whoami) /data
+          mkdir -p /data/data/com.termux/files/usr/tmp
+          sudo chmod -R a+rX /data/data/com.termux/files/usr
 
-      - name: Write build script inside rootfs
+      - name: Provide android_lf.h to Termux sysroot
         run: |
-          # Inject workflow variables directly into the script template to maintain scope inside proot
-          cat << 'EOF' > /data/data/com.termux/files/home/build.sh
-          #!/data/data/com.termux/files/usr/bin/bash
-          set -e
+          NDK_HEADER=$(find /opt/android-ndk-r27c -name android_lf.h -print -quit)
+          if [ -n "$NDK_HEADER" ]; then
+            sudo cp "$NDK_HEADER" /data/data/com.termux/files/usr/include/
+            echo "Copied $NDK_HEADER"
+          else
+            echo "WARNING: android_lf.h not found in NDK, creating empty file"
+            sudo touch /data/data/com.termux/files/usr/include/android_lf.h
+          fi
 
-          # Force standard Termux environment variable definitions
-          export PREFIX="/data/data/com.termux/files/usr"
-          export TMPDIR="/data/data/com.termux/files/usr/tmp"
-          export HOME="/data/data/com.termux/files/home"
-          export MESA_VERSION="${{ github.event.inputs.mesa_version }}"
-          export API_OVERRIDE="${{ github.event.inputs.api_override }}"
+      - name: Install SPIRV-Tools into Termux sysroot
+        run: |
+          ARCH_DEB="aarch64"
+          if [ "${{ matrix.arch }}" = "arm" ]; then ARCH_DEB="arm"; fi
 
-          # System updates and required packages inside Termux
-          apt update
-          apt upgrade -y
-          apt install -y \
-            git make clang binutils ninja meson pkg-config python3-mako \
-            glslang flex bison curl ca-certificates \
-            libc++-dev zlib zstd patch coreutils
+          mkdir -p /tmp/spirv-debs && cd /tmp/spirv-debs
 
-          # Clone Mesa
-          git clone --depth 1 --branch "${MESA_VERSION}" \
-            https://gitlab.freedesktop.org/mesa/mesa.git ${HOME}/mesa
-          cd ${HOME}/mesa
+          wget -q "https://packages.termux.dev/apt/termux-x11/pool/main/libx/libxkbcommon/libxkbcommon_1.13.1_aarch64.deb"
+          wget -q "https://packages.termux.dev/apt/termux-main/pool/main/s/spirv-tools/spirv-tools_1.4.350.0_aarch64.deb"
+          wget -q "https://packages.termux.dev/apt/termux-x11/pool/main/x/xcb-util-keysyms-static/xcb-util-keysyms-static_0.4.1-1_aarch64.deb" 
+          wget -q "https://packages.termux.dev/apt/termux-x11/pool/main/x/xcb-util-keysyms/xcb-util-keysyms_0.4.1-1_aarch64.deb"
+          wget -q "https://packages.termux.dev/apt/termux-main/pool/main/libx/libxcb/libxcb_1.17.0-1_aarch64.deb" 
+        
 
-          # Remove subprojects to prevent conflicting download calls during config
-          rm -rf subprojects
+          for deb in *.deb; do
+            dpkg-deb -x "$deb" /tmp/spirv-debs/extracted/
+          done
 
-          # Helper to apply Termux patches safely
+          sudo cp -r /tmp/spirv-debs/extracted/data/data/com.termux/files/usr/* \
+                     /data/data/com.termux/files/usr/
+          sudo chmod -R 755 /data/data/com.termux/files/usr/lib
+          sudo chmod -R 755 /data/data/com.termux/files/usr/include
+
+      - name: Setup pkg-config wrapper (idirafter – no header conflicts)
+        run: |
+          sudo tee /usr/local/bin/termux-pkg-config > /dev/null << 'SCRIPT'
+          #!/bin/bash
+          export PKG_CONFIG_PATH=/data/data/com.termux/files/usr/lib/pkgconfig
+          /usr/bin/pkg-config "$@" | \
+            sed 's|-I/data/data/com.termux/files/usr/include|-idirafter /data/data/com.termux/files/usr/include|g'
+          SCRIPT
+          sudo chmod +x /usr/local/bin/termux-pkg-config
+
+      - name: Clone Mesa
+        run: |
+          git clone --depth 1 --branch ${{ github.event.inputs.mesa_version }} \
+            https://gitlab.freedesktop.org/mesa/mesa.git ~/mesa
+
+      - name: Apply Termux Bionic patches
+        run: |
+          cd ~/mesa
+          sed -i "s/dependency('libudev',/dependency('libudev', required : false, disabler : true, /g" meson.build
+          # Prevent Meson from finding the header on the runner system
+          sed -i "s/has_header('libudev.h')/false/g" meson.build
+          echo "✔ Successfully stripped libudev from Mesa build files"
           apply_termux_patch() {
             local patchfile="$1"
             echo "Applying $patchfile..."
-            curl -sSfL \
-              "https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/$patchfile" | \
-              patch -N -p1 || echo "Patch $patchfile already applied or skipped"
+            curl -sSfL "https://raw.githubusercontent.com/termux/termux-packages/master/packages/mesa/$patchfile" | patch -N -p1
           }
 
-          # Essential patches for building on Termux platforms
           apply_termux_patch "0000-disable-android-detection.patch"
-          apply_termux_patch "0006-wsi-no-pthread_cancel.patch"
+          # 0007 replaced with direct sed fix (next step)
           apply_termux_patch "0014-replace-turnip-wait_timestamp_safe-assert.patch"
-          apply_termux_patch "0015-define-reallocarray.patch"
           apply_termux_patch "0016-unofficial_support_adreno_710_720.patch"
+          # Uncomment if you need more Adreno support:
           apply_termux_patch "0018-disable-general-layout-in-zink-for-turnip.patch"
-          apply_termux_patch "0020-enable-android-stub.patch"
-
-          # Inject modification patch for SurfaceFlinger output rename
-          cat << 'RENAMEPATCH' > /data/data/com.termux/files/usr/tmp/rename.patch
-          --- a/src/freedreno/vulkan/meson.build
-          +++ b/src/freedreno/vulkan/meson.build
-          @@ -176,7 +176,7 @@ tu_cpp_args += cpp.get_supported_arguments([
-           ])
-           
-           libvulkan_freedreno = shared_library(
-          -  'vulkan_freedreno',
-          +  'vulkan_freedreno_surfaceflinger',
-             [libtu_files, tu_entrypoints, tu_tracepoints, freedreno_xml_header_files, sha1_h, u_format_pack_h, bvh_spv],
-             include_directories : libtu_includes,
-             link_with : [
-          @@ -237,7 +237,7 @@ freedreno_icd = custom_target(
-             build_by_default : true,
-             install_dir : with_vulkan_icd_dir,
-             install_tag : 'runtime',
-          -  install : true,
-          +  install : false,
-           )
-           
-           _dev_icdname = 'freedreno_devenv_icd.@0@.json'.format(host_machine.cpu())
-          RENAMEPATCH
+          apply_termux_patch "0006-wsi-no-pthread_cancel.patch"
+          apply_termux_patch "0015-define-reallocarray.patch"
+          #apply_termux_patch "0021-unofficial-support-adreno-810-825-829.patch"
+       
+      - name: Inject Mock Libudev Headers for Termux Compatibility
+        run: |
+          # 1. Create a dummy libudev.h that also patches Android's missing pthread features
+          sudo mkdir -p /data/data/com.termux/files/usr/include
+          sudo tee /data/data/com.termux/files/usr/include/libudev.h > /dev/null << 'EOF'
+          #ifndef MOCK_LIBUDEV_H
+          #define MOCK_LIBUDEV_H
           
-          patch -N -p1 < /data/data/com.termux/files/usr/tmp/rename.patch || echo "rename.patch already applied"
+          #include <pthread.h>
 
-          # Force override Vulkan API Version if required
-          if [ -n "${API_OVERRIDE}" ]; then
-            DEVFILE=$(find src/freedreno/vulkan -maxdepth 1 -name 'tu_device.*' -print -quit)
-            if [ -n "$DEVFILE" ]; then
-              echo "Forcing Vulkan API version to ${API_OVERRIDE} in $DEVFILE"
-              sed -i "0,/VK_API_VERSION_[0-9_]*/s//VK_API_VERSION_${API_OVERRIDE//\./_}/" "$DEVFILE"
-            fi
+          /* ------------------------------------------------------------- */
+          /* STUBS FOR MISSING BIONIC ANDROID PTHREAD CANCELLATION FEATURES */
+          /* ------------------------------------------------------------- */
+          #ifndef PTHREAD_CANCEL_ASYNCHRONOUS
+          #define PTHREAD_CANCEL_ASYNCHRONOUS 0
+          #endif
+          #ifndef PTHREAD_CANCEL_ENABLE
+          #define PTHREAD_CANCEL_ENABLE 1
+          #endif
+
+          // Define empty static inline stubs so they compile away safely without errors
+          static inline int pthread_setcanceltype(int type, int *oldtype) { return 0; }
+          static inline int pthread_setcancelstate(int state, int *oldstate) { return 0; }
+          static inline int pthread_cancel(pthread_t thread) { return 0; }
+          static inline void pthread_testcancel(void) {}
+          /* ------------------------------------------------------------- */
+
+          struct udev;
+          struct udev_device;
+          struct udev_monitor;
+          struct udev_enumerate;
+          
+          static inline struct udev *udev_new(void) { return 0; }
+          static inline struct udev *udev_ref(struct udev *u) { return u; }
+          static inline void udev_unref(struct udev *u) {}
+          static inline struct udev_device *udev_device_new_from_syspath(struct udev *u, const char *p) { return 0; }
+          static inline struct udev_device *udev_device_ref(struct udev_device *d) { return d; }
+          static inline void udev_device_unref(struct udev_device *d) {}
+          static inline const char *udev_device_get_devnode(struct udev_device *d) { return 0; }
+          static inline const char *udev_device_get_property_value(struct udev_device *d, const char *p) { return 0; }
+          
+          #endif
+           EOF
+          sudo chmod 644 /data/data/com.termux/files/usr/include/libudev.h
+          echo "✔ Mock libudev.h and Bionic pthread patches injected successfully"
+
+
+
+      - name: Apply Turnip pthread→mtx fix (replaces 0007)
+        run: |
+          cd ~/mesa
+          sed -i 's/pthread_mutex_lock(&dev->pipeline_mutex)/mtx_lock(\&dev->pipeline_mutex)/g' src/freedreno/vulkan/tu_shader.cc
+          sed -i 's/pthread_mutex_unlock(&dev->pipeline_mutex)/mtx_unlock(\&dev->pipeline_mutex)/g' src/freedreno/vulkan/tu_shader.cc
+          echo "✔ tu_shader.cc: pthread_mutex → mtx_"
+
+      - name: Override Vulkan API version
+        if: github.event.inputs.api_override != ''
+        run: |
+          cd ~/mesa
+          VER="${{ github.event.inputs.api_override }}"
+          DEVFILE=$(find src/freedreno/vulkan -maxdepth 1 -name 'tu_device.*' -print -quit)
+          if [ -z "$DEVFILE" ]; then
+            echo "❌ Could not find tu_device file"
+            exit 1
           fi
+          echo "Forcing Vulkan API version to $VER in $DEVFILE"
+          sed -i "0,/VK_API_VERSION_[0-9_]*/s//VK_API_VERSION_${VER//\./_}/" "$DEVFILE"
 
-          # Termux architecture-compliant options
-          meson setup build . \
-            --prefix="/data/data/com.termux/files/usr" \
-            -Dplatforms=android \
-            -Dplatform-sdk-version=26 \
-            -Dandroid-stub=true \
-            -Dandroid-libbacktrace=disabled \
-            -Dgallium-drivers= \
-            -Degl=disabled \
+      - name: Create Meson cross file for ${{ matrix.arch }}
+        run: |
+          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+            CPU_FAMILY="aarch64"
+            CPU="aarch64"
+            TARGET="aarch64-linux-android"
+          else
+            CPU_FAMILY="arm"
+            CPU="armv7l"
+            TARGET="armv7a-linux-androideabi"
+          fi
+          API=28
+          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+          > ~/cross_file.txt
+          echo "[host_machine]" >> ~/cross_file.txt
+          echo "system = 'linux'" >> ~/cross_file.txt
+          echo "cpu_family = '${CPU_FAMILY}'" >> ~/cross_file.txt
+          echo "cpu = '${CPU}'" >> ~/cross_file.txt
+          echo "endian = 'little'" >> ~/cross_file.txt
+          echo "" >> ~/cross_file.txt
+          echo "[binaries]" >> ~/cross_file.txt
+          echo "c = '${NDK_BIN}/${TARGET}${API}-clang'" >> ~/cross_file.txt
+          echo "cpp = '${NDK_BIN}/${TARGET}${API}-clang++'" >> ~/cross_file.txt
+          echo "ar = '${NDK_BIN}/llvm-ar'" >> ~/cross_file.txt
+          echo "strip = '${NDK_BIN}/llvm-strip'" >> ~/cross_file.txt
+          echo "pkg-config = 'termux-pkg-config'" >> ~/cross_file.txt
+          echo "" >> ~/cross_file.txt
+          echo "[properties]" >> ~/cross_file.txt
+          echo "" >> ~/cross_file.txt
+          echo "[built-in options]" >> ~/cross_file.txt
+          echo "c_args = ['-D__TERMUX__', '-UHAVE_LIBUDEV', '-U_HAVE_LIBUDEV']" >> ~/cross_file.txt
+          echo "cpp_args = ['-D__TERMUX__', '-UHAVE_LIBUDEV', '-U_HAVE_LIBUDEV']" >> ~/cross_file.txt
+           # No built-in options – the wrapper handles the include path
+
+      - name: Configure Mesa build for Turnip
+        run: |
+          meson setup build ~/mesa \
+            --cross-file ~/cross_file.txt \
             -Dvulkan-drivers=freedreno \
-            -Dfreedreno-kmds=kgsl \
+            -Dgallium-drivers= \
+            -Dplatforms=x11 \
+            -Dandroid-libbacktrace=disabled \
             -Dllvm=disabled \
             -Dbuildtype=release \
+            -Dprefix=/usr \
             -Dstrip=true \
             -Dglx=disabled \
             -Dgbm=disabled \
             -Dopengl=false \
+            -Degl=disabled \
             -Dgles1=disabled \
             -Dgles2=disabled \
+            -Dfreedreno-kmds=msm,kgsl \
             -Dxmlconfig=disabled \
-            -Dvalgrind=disabled \
-            -Dvulkan-layers=
+            -Dvalgrind=disabled
 
-          ninja -C build
+      - name: Build Turnip
+        run: ninja -C build
 
-          # Copy target engine to runtime folder
-          cp build/src/freedreno/vulkan/libvulkan_freedreno_surfaceflinger.so /data/data/com.termux/files/usr/tmp/
-          EOF
-          chmod +x /data/data/com.termux/files/home/build.sh
-
-      - name: Run build inside Termux rootfs via proot (native aarch64)
-        run: |
-          # Use -r / so the environment matches the binary system hardcoding.
-          # Bind /data explicitly so the proot layer sandboxes host storage execution cleanly.
-          proot \
-            -r / \
-            -b /dev -b /proc -b /sys -b /data \
-            -w /data/data/com.termux/files/home \
-            /data/data/com.termux/files/usr/bin/env -i \
-              HOME=/data/data/com.termux/files/home \
-              TERM=xterm-256color \
-              PATH=/data/data/com.termux/files/usr/bin:/bin:/usr/bin \
-              /data/data/com.termux/files/usr/bin/bash /data/data/com.termux/files/home/build.sh
-
-      - name: Package artifact
+      - name: Package artifact for ${{ matrix.arch }}
         run: |
           mkdir -p turnip_out
-          cp /data/data/com.termux/files/usr/tmp/libvulkan_freedreno_surfaceflinger.so turnip_out/
-          VER="${{ github.event.inputs.mesa_version }}"
-          ARCH="aarch64"
-          tar -cJf turnip-${VER}-${ARCH}.tar.xz -C turnip_out .
-          echo "artifact_name=turnip-${VER}-${ARCH}.tar.xz" >> $GITHUB_ENV
+          cp build/src/freedreno/vulkan/libvulkan_freedreno.so turnip_out/
+          if [ "${{ matrix.arch }}" = "arm" ]; then
+            TARNAME=turnip-${{ github.event.inputs.mesa_version }}-arm.tar.xz
+          else
+            TARNAME=turnip-${{ github.event.inputs.mesa_version }}-aarch64.tar.xz
+          fi
+          tar -cJf $TARNAME -C turnip_out .
+          echo "artifact_name=$TARNAME" >> $GITHUB_ENV
 
-      - name: Upload artifact
+      - name: Upload ${{ matrix.arch }} artifact
         uses: actions/upload-artifact@v4
         with:
-          name: turnip-${{ github.event.inputs.mesa_version }}-aarch64
-          path: turnip-*.tar.xz
+          name: turnip-${{ github.event.inputs.mesa_version }}-${{ matrix.arch }}
+          path: turnip-${{ github.event.inputs.mesa_version }}-*.tar.xz
