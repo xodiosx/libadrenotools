@@ -29,7 +29,7 @@ jobs:
 
       - name: Download and setup Android NDK (manual)
         run: |
-          NDK_VERSION="r27c"
+          NDK_VERSION="r29"
           NDK_ZIP="android-ndk-${NDK_VERSION}-linux.zip"
           wget -q "https://dl.google.com/android/repository/${NDK_ZIP}"
           unzip -q ${NDK_ZIP} -d /opt
