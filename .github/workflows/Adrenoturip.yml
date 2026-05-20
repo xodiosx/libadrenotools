@@ -48,7 +48,7 @@ jobs:
 
       - name: Provide android_lf.h to Termux sysroot
         run: |
-          NDK_HEADER=$(find /opt/android-ndk-r27c -name android_lf.h -print -quit)
+          NDK_HEADER=$(find /opt/android-ndk-r29 -name android_lf.h -print -quit)
           if [ -n "$NDK_HEADER" ]; then
             sudo cp "$NDK_HEADER" /data/data/com.termux/files/usr/include/
             echo "Copied $NDK_HEADER"
